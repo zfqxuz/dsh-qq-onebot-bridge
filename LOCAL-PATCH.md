@@ -698,3 +698,40 @@ persona:
 ### 怎么改人设
 直接编辑 `/home/zfq/dshbot/qq/config/persona/{owner,guest,extra}.md` —— 下一句话生效。
 临时给某个群单独设定：写 `dir/chat-g_<群号>.md`。要整体关掉：`persona.enabled: false`。
+
+## 开发群：按群升级角色 `identity.groupRoles`（2026-10-09，用户要求）
+
+### 需求
+用户要一个"开发群"：该群里的任何人都拥有和主人私聊一样的权限（能改代码）。
+用户明确表示完全信任该群，因此接受"整群升级"的语义。
+
+### 为什么只能"整群"
+角色是在**会话**粒度上固化的（决定 preset / cwd / permission preset / 工具面），而一个群
+共享同一条会话 —— 想按发言人切角色做不到（owner 说一句话就会把整个群会话提升到全权限）。
+所以 `groupRoles` 的语义就是：这个群整体按哪个角色跑。
+
+### 实现（lib/bridge.js `#identityConfig()`）
+```yaml
+identity:
+  groupRole: guest              # 默认：所有群仍是只读访客
+  groupRoles:                   # 按群覆盖（数字或字符串群号都能对上）
+    "176628359": owner
+```
+- `roleFor()` 先查 `groupRoles[String(groupId)]`，命中就用它，否则回落到 `groupRole`；
+- **fail-closed**：只认 `owner` / `guest`，其它值（`admin`、`true`、数字…）一律按 guest，
+  配置写错不会意外提权；
+- 启动时 `#logDevGroups()` 打一条醒目警告，把"整群 owner"的群号列出来（可审计）：
+  `[本地补丁] 开发群已启用（整群 owner 全权限，群里任何人都等于主人）：176628359`
+- 收回：删掉 `groupRoles` 那一行（或改成 `guest`）再重启宿主。
+
+### 风险（写在这里，别事后才发现）
+- 群里任何人 = 主人：能执行 shell、读写 `/home/zfq/dshbot` 下任何文件、danger-full-access；
+- 群会话多人共享上下文，互相会看到对方的会话历史；
+- 没有 per-sender 粒度；只能靠 `allowGroups` 决定"这个群能不能用机器人"。
+
+### 测试
+`test/group-role-unit.mjs`（新增，16 项）：开发群拿到 qq-coding + owner cwd +
+danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly + 访客 cwd + restrict；
+私聊角色不受影响；`admin`/`true` 等非法值 fail-closed 到 guest；数字/字符串群号都能命中；
+启动告警包含群号。
+`npm run test:session` 全绿：workspace 18 / session-ownership 44 / retention 12 / persona 19 / group-role 16。
