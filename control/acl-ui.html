@@ -47,7 +47,9 @@
   <button data-tab="matrix" class="on">角色与权限矩阵</button>
   <button data-tab="subjects">主体分配</button>
   <button data-tab="caps">能力视角</button>
-  <button data-tab="audit">审计</button>
+  <button data-tab="resources">资源与限额</button>
+  <button data-tab="corpora">人格与语料</button>
+  <button data-tab="audit">生效与审计</button>
 </nav>
 <main>
   <section id="matrix" class="on">
@@ -81,7 +83,58 @@
     <table id="capTable"></table>
   </section>
 
-  <section id="audit"><div id="auditBox"></div></section>
+  <section id="resources">
+    <div class="row">
+      <input id="resId" placeholder="资源 id，例如 ecs:prod / dir:shared" size="28">
+      <select id="resKind"><option value="dir">dir 目录</option><option value="service">service 外部服务</option><option value="corpus">corpus 语料</option><option value="other">other</option></select>
+      <input id="resUri" placeholder="uri，例如 ecs:prod 或 subjects/shared" size="30">
+      <input id="resLabel" placeholder="显示名">
+      <button class="act primary" id="saveResource">保存资源</button>
+      <span class="muted">资源只描述"有什么"；"谁能用"靠下面按角色授权</span>
+    </div>
+    <div class="row">
+      <label>按角色授权</label><select id="grantRole"></select>
+      <button class="act" id="saveGrants">保存该角色的资源授权</button>
+    </div>
+    <div id="grantBox"></div>
+    <div class="row">
+      <label>限额（按角色）</label><select id="limitRole"></select>
+      <button class="act" id="saveLimits">保存限额</button>
+      <span class="muted">空 = 用注册表默认值；多身份取最宽松</span>
+    </div>
+    <div id="limitBox"></div>
+  </section>
+
+  <section id="corpora">
+    <div class="row">
+      <input id="corpId" placeholder="语料 id（小写字母/数字/_-）" size="20">
+      <input id="corpName" placeholder="显示名" size="16">
+      <select id="corpKind"><option value="files">files 目录</option><option value="db">db</option><option value="vector">vector</option><option value="remote">remote</option></select>
+      <input id="corpRef" placeholder="payload_ref，相对 config/corpora 或绝对路径" size="34">
+      <label><input type="checkbox" id="corpEnabled" checked> 启用</label>
+      <button class="act primary" id="saveCorpus">保存语料</button>
+    </div>
+    <div id="corpusTable"></div>
+    <div class="row">
+      <label>绑定到主体</label><input id="corpSubject" placeholder="user:2493922172 或 group:176628359" size="28">
+      <button class="act" id="saveCorpBind">保存绑定</button>
+      <button class="act" id="previewCorp">预览生效文本</button>
+      <span class="muted">绑定之外还要有 persona.corpus:&lt;id&gt; 权限才生效</span>
+    </div>
+    <div id="corpBindBox"></div>
+    <pre id="corpPreview" style="white-space:pre-wrap;background:#1c1f26;padding:10px;border-radius:6px;max-height:320px;overflow:auto"></pre>
+  </section>
+
+  <section id="audit">
+    <div class="row">
+      <b>生效快照</b>
+      <span class="muted">这些是会话创建时固化的权限面；改动只对**新建/重建**的会话生效（会话固化）</span>
+      <button class="act" id="pruneSessions">清理 30 天前的记录</button>
+    </div>
+    <div id="sessionBox"></div>
+    <div class="row"><b>变更记录</b></div>
+    <div id="auditBox"></div>
+  </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id)
@@ -107,7 +160,7 @@ async function load() {
   sessionStorage.setItem('aclToken', token)
   data = await api('/api/acl')
   $('file').textContent = data.file
-  renderRoles(); renderMatrix(); renderSubjects(); renderCaps(); renderAudit()
+  renderRoles(); renderMatrix(); renderSubjects(); renderCaps(); renderResources(); renderCorpora(); renderAudit()
 }
 
 function renderRoles() {
@@ -115,6 +168,12 @@ function renderRoles() {
   $('roleSel').innerHTML = roles.map((r) => `<option value="${r.id}">${r.id}（${r.name || ''}）·权限 ${r.permissions.length}</option>`).join('')
   $('cloneFrom').innerHTML = '<option value="">（不复制权限）</option>' + roles.map((r) => `<option value="${r.id}">${r.id}</option>`).join('')
   $('capRole').innerHTML = roles.map((r) => `<option value="${r.id}">${r.id}</option>`).join('')
+  for (const id of ['grantRole', 'limitRole']) {
+    const sel = $(id)
+    const keep = sel.value
+    sel.innerHTML = roles.map((r) => `<option value="${r.id}">${r.id}</option>`).join('')
+    sel.value = roles.some((r) => r.id === keep) ? keep : selectedRole
+  }
   if (!roles.some((r) => r.id === selectedRole)) selectedRole = roles[0]?.id || ''
   $('roleSel').value = selectedRole
 }
@@ -193,7 +252,73 @@ function renderCaps() {
   $('capTable').innerHTML = `<tr><th>能力</th><th>类型</th><th>${roleId} 能不能用</th></tr>` + rows
 }
 
+// ── 资源与限额 ──────────────────────────────────────────────────────
+function renderResources() {
+  const resources = Object.values(data.resources || {})
+  const table = resources.length
+    ? '<table><tr><th>资源</th><th>类型</th><th>uri</th><th>各角色授权</th><th></th></tr>'
+      + resources.map((r) => `<tr><td><code>${escapeHtml(r.id)}</code><div class="muted">${escapeHtml(r.label || '')}</div></td>`
+        + `<td>${escapeHtml(r.kind || '')}</td><td><code>${escapeHtml(r.uri || '')}</code></td>`
+        + `<td>${Object.entries(r.grants || {}).map(([role, acts]) => `<span class="badge">${escapeHtml(role)}: ${escapeHtml((acts || []).join('/')) || '—'}</span>`).join(' ') || '<span class="muted">未授权</span>'}</td>`
+        + `<td><button class="act danger" data-delres="${escapeHtml(r.id)}">删</button></td></tr>`).join('') + '</table>'
+    : '<p class="muted">还没有资源。先建一条（例如 kind=dir、uri=subjects/shared）。</p>'
+  document.querySelectorAll('[data-delres]').forEach((btn) => btn.onclick = async () => {
+    if (!confirm('删除资源 ' + btn.dataset.delres + '？')) return
+    try { await post({ action: 'resource-delete', id: btn.dataset.delres }); msg('已删除'); await load() } catch (e) { msg(String(e.message), true) }
+  })
+  const roleId = $('grantRole').value || selectedRole
+  $('grantBox').innerHTML = table
+    + (resources.length ? '<div class="row"><b>按角色授权</b><span class="muted">当前角色：' + escapeHtml(roleId) + '</span></div>' : '')
+    + resources.map((r) => {
+      const acts = new Set(r.grants?.[roleId] || [])
+      return `<div class="row"><code>${escapeHtml(r.id)}</code>`
+        + ['read', 'write', 'exec'].map((a) => `<label><input type="checkbox" data-grant="${escapeHtml(r.id)}" data-act="${a}" ${acts.has(a) ? 'checked' : ''}> ${a}</label>`).join('')
+        + '</div>'
+    }).join('')
+  const role2 = $('limitRole').value || selectedRole
+  const limits = data.roles[role2]?.limits || {}
+  $('limitBox').innerHTML = Object.entries(data.limits || {}).map(([key, spec]) => {
+    const value = limits[key]
+    return `<div class="row"><label style="width:260px">${escapeHtml(spec.label)}<div class="id muted">${key}（${spec.direction === 'min' ? '越小越宽松' : '越大越宽松'}，默认 ${spec.default === null ? '不限' : spec.default}）</div></label>`
+      + `<input data-limit="${key}" size="10" value="${value === undefined || value === null ? '' : value}" placeholder="空=默认"></div>`
+  }).join('')
+}
+
+function renderCorpora() {
+  const corpora = Object.values(data.corpora || {})
+  $('corpusTable').innerHTML = corpora.length
+    ? '<table><tr><th>语料</th><th>类型</th><th>payload_ref</th><th>启用</th><th>绑定主体</th><th></th></tr>'
+      + corpora.map((c) => {
+        const binders = Object.entries(data.corpusBindings || {}).filter(([, ids]) => ids.includes(c.id)).map(([s]) => s)
+        return `<tr><td><code>${escapeHtml(c.id)}</code><div class="muted">${escapeHtml(c.name || '')}</div></td>`
+          + `<td>${escapeHtml(c.kind || '')}</td><td><code>${escapeHtml(c.payloadRef || '')}</code></td>`
+          + `<td>${c.enabled === false ? '<span class="badge no">停用</span>' : '<span class="badge">启用</span>'}</td>`
+          + `<td>${binders.map((x) => `<span class="badge">${escapeHtml(x)}</span>`).join(' ') || '<span class="muted">—</span>'}</td>`
+          + `<td><button class="act danger" data-delcorp="${escapeHtml(c.id)}">删</button></td></tr>`
+      }).join('') + '</table>'
+    : '<p class="muted">还没有语料资产。</p>'
+  document.querySelectorAll('[data-delcorp]').forEach((btn) => btn.onclick = async () => {
+    if (!confirm('删除语料 ' + btn.dataset.delcorp + '？')) return
+    try { await post({ action: 'corpus-delete', id: btn.dataset.delcorp }); msg('已删除'); await load() } catch (e) { msg(String(e.message), true) }
+  })
+  const subject = $('corpSubject').value.trim() || editingSubject
+  if (!subject) { $('corpBindBox').innerHTML = ''; return }
+  const current = new Set(data.corpusBindings?.[subject] || [])
+  $('corpBindBox').innerHTML = `<div class="row"><b>${escapeHtml(subject)}</b>`
+    + (corpora.length ? corpora.map((c) => `<label><input type="checkbox" data-corpid="${escapeHtml(c.id)}" ${current.has(c.id) ? 'checked' : ''}> ${escapeHtml(c.id)}</label>`).join('') : '<span class="muted">先建语料</span>')
+    + '</div>'
+}
+
 function renderAudit() {
+  const sessions = data.sessions || []
+  $('sessionBox').innerHTML = sessions.length
+    ? '<table><tr><th>主体</th><th>会话</th><th>角色</th><th>能力面</th><th>建立</th><th>最近</th></tr>'
+      + sessions.map((s) => `<tr><td><code>${escapeHtml(s.subjectId)}</code></td><td><code>${escapeHtml(String(s.sessionId).slice(0, 22))}…</code></td>`
+        + `<td>${(s.roles || []).map((r) => `<span class="badge">${escapeHtml(r)}</span>`).join(' ')}</td>`
+        + `<td>${s.surface?.readonly ? '<span class="badge no">只读</span>' : '<span class="badge">可写</span>'} 工具 ${(s.surface?.allowedTools || []).length} 个 <span class="muted">${escapeHtml(s.surface?.kind || '')}</span></td>`
+        + `<td>${new Date(s.createdAt).toLocaleString()}</td><td>${new Date(s.lastSeen).toLocaleString()}</td></tr>`).join('') + '</table>'
+    : '<p class="muted">还没有会话快照（重启后新会话才会记录）。</p>'
+  $('auditBox').innerHTML = '<table><tr><th>时间</th><th>谁</th><th>动作</th><th>目标</th><th>变化</th></tr>'
   $('auditBox').innerHTML = '<table><tr><th>时间</th><th>谁</th><th>动作</th><th>目标</th><th>变化</th></tr>'
     + data.audit.map((row) => {
       const at = new Date(row.at).toLocaleString()
@@ -230,6 +355,61 @@ $('createRole').onclick = async () => {
 $('deleteRole').onclick = async () => {
   if (!confirm('删除角色 ' + selectedRole + '？')) return
   try { await post({ action: 'role-delete', id: selectedRole }); msg('已删除'); await load() } catch (error) { msg(String(error.message), true) }
+}
+$('grantRole').onchange = () => renderResources()
+$('limitRole').onchange = () => renderResources()
+$('saveResource').onclick = async () => {
+  try {
+    await post({ action: 'resource-upsert', id: $('resId').value.trim(), kind: $('resKind').value, uri: $('resUri').value.trim(), label: $('resLabel').value.trim() })
+    msg('资源已保存'); await load()
+  } catch (e) { msg(String(e.message), true) }
+}
+$('saveGrants').onclick = async () => {
+  const grants = {}
+  document.querySelectorAll('[data-grant]').forEach((el) => {
+    if (!el.checked) return
+    const id = el.dataset.grant
+    ;(grants[id] ??= []).push(el.dataset.act)
+  })
+  try {
+    await post({ action: 'resource-grants', role: $('grantRole').value, grants: Object.entries(grants).map(([resourceId, actions]) => ({ resourceId, actions })) })
+    msg('资源授权已保存'); await load()
+  } catch (e) { msg(String(e.message), true) }
+}
+$('saveLimits').onclick = async () => {
+  const limits = {}
+  document.querySelectorAll('[data-limit]').forEach((el) => {
+    const raw = el.value.trim()
+    if (raw === '') return
+    limits[el.dataset.limit] = Number(raw)
+  })
+  try { await post({ action: 'role-limits', role: $('limitRole').value, limits }); msg('限额已保存'); await load() } catch (e) { msg(String(e.message), true) }
+}
+$('saveCorpus').onclick = async () => {
+  try {
+    await post({ action: 'corpus-upsert', id: $('corpId').value.trim(), name: $('corpName').value.trim(), kind: $('corpKind').value, payloadRef: $('corpRef').value.trim(), enabled: $('corpEnabled').checked })
+    msg('语料已保存'); await load()
+  } catch (e) { msg(String(e.message), true) }
+}
+$('saveCorpBind').onclick = async () => {
+  const ids = [...document.querySelectorAll('[data-corpid]')].filter((el) => el.checked).map((el) => el.dataset.corpid)
+  try {
+    await post({ action: 'corpus-bindings', subject: $('corpSubject').value.trim(), corpora: ids })
+    msg('绑定已保存'); await load(); renderCorpora()
+  } catch (e) { msg(String(e.message), true) }
+}
+$('corpSubject').onchange = () => renderCorpora()
+$('previewCorp').onclick = async () => {
+  const subject = $('corpSubject').value.trim()
+  if (!subject) { msg('先填主体', true); return }
+  try {
+    const res = await api('/api/acl/corpus-preview?subject=' + encodeURIComponent(subject))
+    const skip = (res.skipped || []).map((x) => `${x.id}：${x.reason}`).join('\n')
+    $('corpPreview').textContent = (res.text || '（没有生效的语料）') + (skip ? `\n\n— 跳过 —\n${skip}` : '')
+  } catch (e) { msg(String(e.message), true) }
+}
+$('pruneSessions').onclick = async () => {
+  try { const res = await post({ action: 'session-prune', days: 30 }); msg('已清理 ' + res.removed + ' 条'); await load() } catch (e) { msg(String(e.message), true) }
 }
 $('addSubject').onclick = () => {
   editingSubject = $('subject').value.trim()

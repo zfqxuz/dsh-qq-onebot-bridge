@@ -11,6 +11,7 @@ import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { openAclStore } from '../../lib/acl-store.js'
+import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
 
@@ -54,6 +55,11 @@ export function aclSnapshot(store) {
     permissions: PERMISSIONS.map((item) => ({ id: item.id, domain: item.domain ?? String(item.id).split('.')[0], kind: item.kind, label: item.label, group: item.group })),
     capabilities: CAPABILITIES.map((item) => ({ id: item.id, kind: item.kind, group: item.group, label: item.label, need: item.need ?? [], gate: item.gate ?? null, entry: item.entry ?? '' })),
     limits: Object.fromEntries(Object.entries(LIMITS).map(([key, spec]) => [key, { direction: spec.direction, default: spec.default, label: spec.label }])),
+    resources: policy.resources ?? {},
+    corpora: policy.corpora ?? {},
+    corpusBindings: policy.corpusBindings ?? {},
+    // 生效快照：哪些会话是按哪套权限面建的（只读展示，D-12：控制台不碰会话）
+    sessions: store.listSessions(200),
     audit: store.auditTail(50).map((row) => ({
       at: Number(row.at), actor: row.actor, action: row.action, target: row.target,
       before: safeJson(row.before_json), after: safeJson(row.after_json),
@@ -140,6 +146,55 @@ export function applyAclAction(store, body, { actor = 'console' } = {}) {
       store.audit({ actor, action: 'set-role-limits', target: role, after: limits })
       return { ok: true, status: 200, payload: { ok: true } }
     }
+    if (action === 'resource-upsert') {
+      const id = String(body.id ?? '').trim()
+      if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,80}$/.test(id)) return bad('资源 id 只能用字母/数字/._-:/，且不能为空')
+      const kind = ['dir', 'service', 'corpus', 'other'].includes(String(body.kind)) ? String(body.kind) : 'dir'
+      const row = store.upsertResource({ id, kind, uri: String(body.uri ?? ''), label: String(body.label ?? ''), note: String(body.note ?? '') }, { actor })
+      return { ok: true, status: 200, payload: { ok: true, resource: { id: row.id, kind: row.kind, uri: row.uri, label: row.label } } }
+    }
+    if (action === 'resource-delete') {
+      return { ok: true, status: 200, payload: { ok: true, deleted: store.deleteResource(String(body.id ?? ''), { actor }) } }
+    }
+    if (action === 'resource-grants') {
+      const role = String(body.role ?? '')
+      const policy = store.loadPolicy()
+      if (!policy.roles[role]) return bad(`角色不存在：${role}`)
+      const entries = Array.isArray(body.grants) ? body.grants : []
+      const unknown = entries.filter((entry) => !policy.resources?.[String(entry?.resourceId ?? '')])
+      if (unknown.length > 0) return bad(`资源不存在：${unknown.map((entry) => entry.resourceId).join(', ')}`)
+      return { ok: true, status: 200, payload: { ok: true, grants: store.setResourceGrants(role, entries, { actor }) } }
+    }
+    if (action === 'corpus-upsert') {
+      const row = store.upsertCorpus({
+        id: String(body.id ?? '').trim(),
+        name: String(body.name ?? ''),
+        kind: ['files', 'db', 'vector', 'remote'].includes(String(body.kind)) ? String(body.kind) : 'files',
+        description: String(body.description ?? ''),
+        payloadRef: String(body.payloadRef ?? ''),
+        version: Number(body.version) || 1,
+        enabled: body.enabled !== false,
+      }, { actor })
+      return { ok: true, status: 200, payload: { ok: true, corpus: { id: row.id, name: row.name, kind: row.kind, payloadRef: row.payload_ref, enabled: Number(row.enabled) !== 0 } } }
+    }
+    if (action === 'corpus-delete') {
+      return { ok: true, status: 200, payload: { ok: true, deleted: store.deleteCorpus(String(body.id ?? ''), { actor }) } }
+    }
+    if (action === 'corpus-bindings') {
+      const subject = String(body.subject ?? '').trim()
+      if (!/^(user|group):\S+$/.test(subject)) return bad('主体写法应为 user:<QQ号> 或 group:<群号>')
+      const policy = store.loadPolicy()
+      const ids = list(body.corpora)
+      const unknown = ids.filter((id) => !policy.corpora?.[id])
+      if (unknown.length > 0) return bad(`语料不存在：${unknown.join(', ')}`)
+      return { ok: true, status: 200, payload: { ok: true, corpora: store.setCorpusBindings(subject, ids, { actor }) } }
+    }
+    if (action === 'session-prune') {
+      const days = Math.max(0, Number(body.days) || 30)
+      const removed = store.pruneSessions(Date.now() - days * 24 * 3600 * 1000)
+      store.audit({ actor, action: 'session-prune', target: `${days}d`, after: { removed } })
+      return { ok: true, status: 200, payload: { ok: true, removed } }
+    }
     return bad(`未知操作：${action || '(空)'}`)
   } catch (error) {
     return { ok: false, status: 500, payload: { ok: false, error: String(error?.message ?? error) } }
@@ -150,7 +205,7 @@ export function applyAclAction(store, body, { actor = 'console' } = {}) {
  * 起服务。`ui` 是页面 HTML 字符串；`store` 可注入（测试用临时库）。
  * 返回 { server, port, url, token, close() }。
  */
-export async function startAclConsole({ file, token = createAclToken(), ui = '', port = 0, host = '127.0.0.1', logger = console } = {}) {
+export async function startAclConsole({ file, token = createAclToken(), ui = '', port = 0, host = '127.0.0.1', logger = console, corporaRoot = '' } = {}) {
   const html = ui || (existsSync(new URL('../acl-ui.html', import.meta.url))
     ? readFileSync(new URL('../acl-ui.html', import.meta.url), 'utf8')
     : '<!doctype html><meta charset="utf-8"><h1>权限控制台</h1><p>缺少 control/acl-ui.html</p>')
@@ -174,6 +229,19 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
     try {
       if (req.method === 'GET' && url.pathname === '/api/acl') {
         return json(res, 200, aclSnapshot(store))
+      }
+      if (req.method === 'GET' && url.pathname === '/api/acl/corpus-preview') {
+        const subject = String(url.searchParams.get('subject') ?? '').trim()
+        if (!/^(user|group):\S+$/.test(subject)) return json(res, 400, { ok: false, error: '要带 subject=user:<QQ号> 或 group:<群号>' })
+        const detail = resolveCorpusDetailed({ policy: store.loadPolicy(), subjectId: subject, root: corporaRoot })
+        return json(res, 200, {
+          ok: true,
+          subject,
+          bound: detail.bound,
+          items: detail.items.map((item) => ({ id: item.id, title: item.title, chars: item.text.length })),
+          text: detail.items.map((item) => `【${item.title}】\n${item.text.trim()}`).join('\n\n'),
+          skipped: detail.skipped,
+        })
       }
       if (req.method === 'GET' && url.pathname === '/api/acl/export') {
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-disposition': 'attachment; filename="acl-export.json"' })

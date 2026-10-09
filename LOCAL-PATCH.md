@@ -921,3 +921,46 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
   → 出站门禁把群会话算成 `group:`（空 id），落到默认角色上，等于没判。现在兼容两种入参。
 - 测试：`test/acl-enforcement-unit.mjs`（10 项）覆盖上面四条 + 出站执行期拦截 +
   "群主体 deny 不影响命令判定"（D-8 的粒度）。18 个测试文件全绿。
+
+### 追加：控制台补齐 + 语料库抽象层（2026-10-10 00:xx，SPEC 二/三）
+
+这一轮做的是 SPEC 里剩下的两块：**控制台后三页 + 数据模型补表** 和 **语料库那一层**。
+
+**1. ACL 库升到 schema v2（`lib/acl-store.js`）**
+
+- 新增五张表：`resources` / `resource_grants`（可授权资源：外部服务、目录、共享只读区）、
+  `corpora` / `corpus_bindings`（语料资产与主体绑定）、`sessions`（主体 → 会话 → 生效能力面快照）。
+  全是 `CREATE TABLE IF NOT EXISTS`，老库打开时自动补齐，不用迁移脚本。
+- `loadPolicy()` 现在把 resources / corpora / corpusBindings 一起读进策略快照 ——
+  桥接侧一次 5 秒缓存的读取就够，不再多开连接。
+- **写前备份 + 显式事务**（SPEC §5.2 的要求，之前一直欠着）：
+  每个配置类写操作（角色权限/deny、主体分配/deny、资源、语料、绑定）落库前先
+  `wal_checkpoint` + 拷一份 `<file>.bak-<时间戳>`（保留最近 10 份），写操作包在事务里，出错整体回滚。
+  运行期快照（sessions）**不**触发备份，否则一天几百份。
+
+**2. 语料库抽象层（新文件 `lib/corpus.js`，SPEC §6）**
+
+- 只实现"资产"这一层：`kind=files` = 一个目录里的若干 `.md/.txt`（按文件名排序，单文件 16KB、总量 64KB 封顶）。
+- 生效条件 = **绑定 ∩ 角色白名单**：`corpus_bindings` 选"用哪些"，权限点 `persona.corpus:<id>`（或 `*`）
+  决定"能不能用"；被 deny 覆盖也不给。绑了但没权限的会记进 `skipped` 并写明原因（控制台能看见）。
+- `resolveCorpusDetailed()`（带原因，控制台预览用）/ `resolveCorpus()`（SPEC 约定的 `[{id,title,text}]`），
+  任何异常都吞成"跳过这条"，**绝不让语料把会话搞崩**。
+- 桥接侧 `#registerCorpusSection()`：注册成**函数文本**，每轮重新解析 —— 改语料内容/绑定下一句话就生效；
+  没绑定就零成本跳过。
+
+**3. 控制台从 4 页变 6 页（`control/lib/acl-console.mjs` + `control/acl-ui.html`）**
+
+- 新增「资源与限额」：资源增删（kind/uri/label）、按角色的 read/write/exec 授权、按角色的限额编辑。
+- 新增「人格与语料」：语料增删（id/name/kind/payload_ref/enabled）、按主体绑定、**一键预览生效文本**
+  （走 `/api/acl/corpus-preview`，把跳过的语料和原因一并列出来）。
+- 「审计」升级为「生效与审计」：上面是会话快照表（主体/会话/角色/只读或可写/工具数/建立与最近时间），
+  下面是原来的变更记录，另加"清理 30 天前记录"。见 D-12：这里**只读展示，不碰会话**。
+- 新增写操作：`resource-upsert` / `resource-delete` / `resource-grants` / `corpus-upsert` /
+  `corpus-delete` / `corpus-bindings` / `session-prune`，全部走词表与存在性校验（fail-closed）。
+
+**4. 会话快照（`#recordAclSession`）**：建会话与续接会话时把"这个会话按哪套能力面建的"
+（主体、角色、只读/可写、允许的工具名、scoped 开关）写进 `sessions` 表，
+控制台据此回答"哪些会话还在用旧能力面"。写失败只记 debug，绝不拖垮会话。
+
+**测试**：新增 `test/corpus-unit.mjs`（15 项）、`test/acl-store-unit.mjs` +13 项（v2 表、写前备份、
+会话快照去重）、`test/acl-console-unit.mjs` +12 项（新接口与预览）。19 个测试文件全绿。

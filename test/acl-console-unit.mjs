@@ -3,7 +3,7 @@
  *
  * 全部走真实 HTTP（随机端口），不碰线上库（用临时库）。
  */
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { openAclStore } from '../lib/acl-store.js'
@@ -25,8 +25,12 @@ store.seedBuiltinRoles()
 store.importAssignmentsFromConfig({ identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest' }, adminUsers: [1002] })
 store.close()
 
+const corporaRoot = join(root, 'corpora')
+mkdirSync(join(corporaRoot, 'lore'), { recursive: true })
+writeFileSync(join(corporaRoot, 'lore', '01.md'), '世界观第一条')
+
 const token = createAclToken()
-const ui = await startAclConsole({ file: dbFile, token, ui: '<!doctype html><title>ACL</title>' })
+const ui = await startAclConsole({ file: dbFile, token, ui: '<!doctype html><title>ACL</title>', corporaRoot })
 const base = `http://127.0.0.1:${ui.port}`
 
 const get = (path, headers = {}) => fetch(`${base}${path}`, { headers })
@@ -87,6 +91,35 @@ const unknownAction = await post({ action: 'nope' })
 check('未知操作 → 400', unknownAction.status === 400)
 const badJson = await fetch(`${base}/api/acl?token=${token}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' })
 check('请求体不是 JSON → 400', badJson.status === 400)
+
+// ===== 4b. v2：资源 / 语料 / 会话 =====
+const resUp = await post({ action: 'resource-upsert', id: 'dir:shared', kind: 'dir', uri: 'subjects/shared', label: '共享只读区' })
+check('资源写入 → 200', resUp.status === 200)
+const resBadId = await post({ action: 'resource-upsert', id: '有中文的 id' })
+check('非法资源 id → 400', resBadId.status === 400)
+const grantRes = await post({ action: 'resource-grants', role: 'guest', grants: [{ resourceId: 'dir:shared', actions: ['read', 'nope'] }] })
+check('资源授权 → 200', grantRes.status === 200)
+const grantMissing = await post({ action: 'resource-grants', role: 'guest', grants: [{ resourceId: 'no-such', actions: ['read'] }] })
+check('授权不存在的资源 → 400', grantMissing.status === 400)
+const corpUp = await post({ action: 'corpus-upsert', id: 'lore', name: '世界观', kind: 'files', payloadRef: 'lore', enabled: true })
+check('语料写入 → 200', corpUp.status === 200)
+const bind = await post({ action: 'corpus-bindings', subject: 'group:2001', corpora: ['lore'] })
+check('语料绑定 → 200', bind.status === 200)
+const bindBad = await post({ action: 'corpus-bindings', subject: 'group:2001', corpora: ['nope'] })
+check('绑定不存在的语料 → 400', bindBad.status === 400)
+const snap2 = await (await get(`/api/acl?token=${token}`)).json()
+check('快照带 resources/corpora/corpusBindings/sessions',
+  Boolean(snap2.resources?.['dir:shared'] && snap2.corpora?.lore && snap2.corpusBindings?.['group:2001'] && Array.isArray(snap2.sessions)),
+  JSON.stringify({ r: Object.keys(snap2.resources ?? {}), c: Object.keys(snap2.corpora ?? {}) }))
+check('快照里的资源授权可读回', (snap2.resources['dir:shared'].grants.guest ?? []).join(',') === 'read')
+
+const preview = await (await get(`/api/acl/corpus-preview?token=${token}&subject=group:2001`)).json()
+check('语料预览接口能解析文件', preview.items?.length === 1 && preview.text.includes('世界观第一条'), JSON.stringify(preview.items))
+const previewBad = await get(`/api/acl/corpus-preview?token=${token}&subject=nope`)
+check('语料预览缺主体格式 → 400', previewBad.status === 400)
+
+const prune = await post({ action: 'session-prune', days: 30 })
+check('会话快照清理 → 200', prune.status === 200)
 
 // ===== 5. 导出 =====
 const exported = await (await get(`/api/acl/export?token=${token}`)).json()

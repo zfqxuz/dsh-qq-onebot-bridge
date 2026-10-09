@@ -5,7 +5,7 @@
  *   node control/bin/qq-acl-console.mjs [--port 8798] [--file <acl.db>] [--open]
  *
  * - 只绑 127.0.0.1；URL 里带 token（token 存在 <数据根>/state/acl-console.json，重启后地址不变）
- * - 页面：角色与权限矩阵（allow + deny）/ 主体分配 / 能力视角 / 审计
+ * - 页面：角色与权限矩阵（allow + deny）/ 主体分配 / 能力视角 / 资源与限额 / 人格与语料 / 生效与审计
  * - 数据源就是 lib/acl-store.js 那个库；页面上的改动立刻落库（带审计），
  *   桥接最多 5 秒后（权限快照缓存）读到新策略
  */
@@ -36,7 +36,8 @@ state.port = port
 mkdirSync(dirname(stateFile), { recursive: true })
 writeFileSync(stateFile, JSON.stringify(state, null, 2))
 
-const console_ = await startAclConsole({ file: dbFile, token: state.token, port })
+const corporaRoot = join(dataRoot, 'config', 'corpora')
+const console_ = await startAclConsole({ file: dbFile, token: state.token, port, corporaRoot })
 console.log('权限控制台已启动：')
 console.log(`  ${console_.url}`)
 console.log(`  库文件：${dbFile}`)

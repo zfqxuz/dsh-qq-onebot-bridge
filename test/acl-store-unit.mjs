@@ -10,7 +10,7 @@
  *   - 端到端：在库里给基础角色补上 shell 权限 → 该群的会话真的挂上能跑 shell 的 preset。
  */
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Config } from '../lib/index.js'
@@ -171,6 +171,46 @@ check('端到端：库里给了写权限 → 白名单里出现 write/edit',
   JSON.stringify(session?.restrict?.[0] ?? null))
 check('端到端：库里没给的 ECS 工具仍被挡', !(session?.restrict?.[0]?.allow ?? []).includes('ecs_exec'))
 bridge.stop()
+
+// ===== v2：资源 / 语料 / 会话快照 / 写前备份 =====
+const v2 = openAclStore(dbFile, { create: false })
+const res = v2.upsertResource({ id: 'dir:shared', kind: 'dir', uri: 'subjects/shared', label: '共享只读区' })
+check('资源写入并读回', res?.id === 'dir:shared' && res.kind === 'dir', JSON.stringify(res))
+v2.upsertResource({ id: 'svc:ecs', kind: 'service', uri: 'ecs:prod', label: 'ECS 生产' })
+const unknownGrant = v2.setResourceGrants('guest', [{ resourceId: 'no-such-resource', actions: ['read'] }])
+check('授权不存在的资源被丢弃（fail-closed）', unknownGrant.length === 0, JSON.stringify(unknownGrant))
+const grants = v2.setResourceGrants('guest', [{ resourceId: 'dir:shared', actions: ['read', 'bogus'] }])
+check('资源授权只保留合法动作', grants.length === 1 && grants[0].actions.join(',') === 'read', JSON.stringify(grants))
+const policyV2 = v2.loadPolicy()
+check('策略快照带 resources（含 grants）',
+  policyV2.resources?.['dir:shared']?.grants?.guest?.join(',') === 'read', JSON.stringify(policyV2.resources ?? {}))
+
+v2.upsertCorpus({ id: 'lore', name: '世界观', kind: 'files', payloadRef: 'lore' })
+v2.upsertCorpus({ id: 'off', name: '停用', kind: 'files', payloadRef: 'off', enabled: false })
+const bound = v2.setCorpusBindings('group:2001', ['lore', 'off'])
+check('语料绑定落库（含停用的那条）', bound.join(',') === 'lore,off', JSON.stringify(bound))
+const notFound = v2.setCorpusBindings('group:2001', ['lore', 'nope'])
+check('绑定不存在的语料被丢弃', notFound.join(',') === 'lore', JSON.stringify(notFound))
+const policyV3 = v2.loadPolicy()
+check('策略快照带 corpora + corpusBindings',
+  policyV3.corpora?.lore?.payloadRef === 'lore' && (policyV3.corpusBindings['group:2001'] ?? []).includes('lore'),
+  JSON.stringify(policyV3.corpusBindings))
+check('停用的语料在快照里 enabled=false', policyV3.corpora.off.enabled === false)
+
+v2.recordSession({ subjectId: 'group:2001', sessionId: 'session-aaaa', roles: ['guest'], surface: { readonly: true, allowedTools: ['read'] } })
+v2.recordSession({ subjectId: 'group:2001', sessionId: 'session-aaaa', roles: ['guest'], surface: { readonly: false, allowedTools: [] } })
+const sessions = v2.listSessions(10)
+check('会话快照按 session_id 覆盖而不是重复插入',
+  sessions.filter((x) => x.sessionId === 'session-aaaa').length === 1, JSON.stringify(sessions.map((x) => x.sessionId)))
+check('桥接建会话时会自己写快照（端到端那条已落库）',
+  sessions.some((x) => String(x.sessionId).startsWith('qq-')) && sessions.some((x) => x.subjectId === 'group:2001'), JSON.stringify(sessions.map((x) => x.subjectId)))
+check('会话快照里的角色与能力面可读回',
+  sessions[0].roles.join(',') === 'guest' && sessions[0].surface.allowedTools.length === 0, JSON.stringify(sessions[0]))
+check('清理旧会话快照', typeof v2.pruneSessions(Date.now() + 1000) === 'number')
+
+const bakCount = readdirSync(join(root, 'config')).filter((n) => n.includes('.bak-')).length
+check('配置类写操作留下写前备份', bakCount > 0, `bak=${bakCount}`)
+v2.close()
 
 rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)
