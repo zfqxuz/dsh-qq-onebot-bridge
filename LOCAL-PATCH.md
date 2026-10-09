@@ -401,3 +401,39 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 `mark()`（单条消息的 trace 链）与这些生命周期事件是两条互补的线：
 - `mark` 回答"这条消息经历了什么"；
 - 新增的 bind/preclaim/reconcile/transfer/conflict 回答"这个聊天的归属是怎么收敛的"。
+
+## 工作区成员登记：QQ 会话必须进 workspace.sessionIds（2026-10-09，用户报障）
+
+### 现象
+用户 "/ws dshbot" 绑了工作区，但浏览器的工作区列表里看不到任何 QQ 会话，
+哪怕这些会话的 `cwd` 就是 `/home/zfq/dshbot`。
+
+### 根因（实测数据）
+- 磁盘上 `sessions/--home-zfq-dshbot--/` 有 16 条会话（13 条 `qq-*` + 3 条 `session-*`），
+  header 里 `cwd` 全是 `/home/zfq/dshbot`；
+- 但 `~/.dsh/storages/workspace.json` 的 `dshbot` 工作区 `sessionIds` **只有那 3 条 `session-*`**；
+- DSH 的工作区列表读的是这份白名单：`WorkspaceEntity.sessionIds` =
+  `record.sessionIds.filter(id => sessionPath(id) === workspace.path)`，**不是扫目录**；
+- DSH 自己只在 `state.initialized === false` 时跑一次 `WorkspaceRegistry.bootstrap()` 扫盘补齐；
+  之后只有走 UI 建会话才会调 `WorkspaceEntity.attachSession()` 追加。
+- 桥接是 `ctx.agents.create()` 自己建会话的，从不走 UI → **目录里有、工作区里没有**。
+
+### 修法（lib/bridge.js）
+1. `#ensureWorkspaceMembership(binding, sessionId, key, source)`：用 DSH 官方写入口
+   `ctx.get('workspaceRegistry').resolveByPath(path).attachSession(id)` 补登记。
+   - **不直接改 workspace.json**：那是宿主 `storageDomain` 的东西，绕过写链会和
+     `pendingMutation` / 内存快照打架；
+   - `attachSession` 自己会校验 `header.cwd` 的 realpath 是否等于工作区路径，不匹配就抛错，
+     所以 cwd 不对的会话由 DSH 兜住，桥接不用自己判。
+2. `#bindSession()` 里：有工作区绑定就 `void this.#ensureWorkspaceMembership(...)`。
+   因为 preclaim / 对账 / 认领交接 / 正常打开**全都收敛到 `#bindSession`**，
+   一处挂上就覆盖所有路径（含每次宿主重启的 preclaim）。
+3. `#backfillWorkspaceMembership()`：启动回填。对 `qq-workspaces.json` 里出现过的每个工作区路径，
+   扫描对应项目目录，把没登记的会话补进去（按 mtime **升序**追加，因为 `attachSession` 是前插，
+   这样最终顺序自然是最新在前，与 `#workspaceSessions` 口径一致）。上限 200 条/工作区。
+4. `/handoff status` 的最近事件列表加入 `workspace` 阶段。
+
+### 验证
+- `node test/session-ownership-unit.mjs`：**27 passed / 0 failed**（原 24）
+  新增 3 项：续接的工作区会话被登记、启动回填补上未登记会话、登记写进 trace（stage=workspace）。
+- `node test/workspace-unit.mjs`：18 passed / 0 failed。

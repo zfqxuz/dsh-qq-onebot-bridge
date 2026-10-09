@@ -104,7 +104,7 @@ class MockServer extends EventEmitter {
   currentSocket() { return this.socket }
 }
 
-function makeCtx() {
+function makeCtx({ workspaceRegistry = null } = {}) {
   const handlers = new Map()
   const built = []
   const emitSession = (sessionId, text) => {
@@ -140,7 +140,7 @@ function makeCtx() {
       handlers.set(event, list)
       return () => {}
     },
-    get: () => undefined,
+    get: (name) => (name === 'workspaceRegistry' ? workspaceRegistry : undefined),
     agents: {
       create: async (options) => build(options.sessionId, options),
       resume: async (options) => build(options.resumeSessionId, options),
@@ -214,8 +214,8 @@ const readBinding = (key) => {
 // ===========================================================================
 
 /** 造一个"宿主重启后"的新桥实例：ctx 可注入 resume 行为。 */
-function makeCtx2({ resumeError = null } = {}) {
-  const base = makeCtx()
+function makeCtx2({ resumeError = null, workspaceRegistry = null } = {}) {
+  const base = makeCtx({ workspaceRegistry })
   const resumeCalls = []
   const createCalls = []
   const createMetas = []
@@ -435,6 +435,61 @@ server7.emit('message', {
 await new Promise((r) => setTimeout(r, 300))
 const reply7 = server7.sent.slice(before7).map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n')
 check('/handoff status 拒绝非管理员', reply7.includes('只对管理员开放'), reply7.trim().slice(0, 60))
+
+// --- 8. 工作区成员登记：桥接建/续的会话必须进 workspaceRegistry.sessionIds ---
+// 背景：DSH 工作区列表读的是 workspace.json 的 sessionIds 白名单，而且只有走 UI 建会话
+// 才会 attachSession 追加。桥接自己 ctx.agents.create() 建的会话曾"落在目录里、不在工作区里"。
+const WS_SESSION = 'session-44444444-4444-4444-8444-444444444444'
+const WS_EXTRA = 'session-55555555-5555-4555-8555-555555555555'
+function makeWorkspaceSessionDir(id) {
+  const dir = join(sessionRoot, projectKey(stateDir), id)
+  mkdirSync(dir, { recursive: true })
+  const header = {
+    type: 'session', version: 4, id, createdAt: Date.now(), cwd: stateDir,
+    isSeeded: false, delegationDepth: 0, agentPreset: 'qq-coding',
+  }
+  writeFileSync(join(dir, 'session.v4.jsonl.zstd'), zstdCompressSync(Buffer.from(`${JSON.stringify(header)}\n`, 'utf8')))
+  writeFileSync(join(dir, 'session.lock'), '')
+}
+makeWorkspaceSessionDir(WS_SESSION)
+makeWorkspaceSessionDir(WS_EXTRA)
+writeFileSync(join(stateDir, 'qq-workspaces.json'), JSON.stringify({
+  'u:1001': { title: 'wsX', path: stateDir, sessionId: WS_SESSION },
+}))
+
+const wsr = { appended: [] }
+const workspaceRegistry = {
+  async resolveByPath(path) {
+    if (path !== stateDir) return undefined
+    return {
+      id: 'ws-x',
+      path: stateDir,
+      get sessionIds() { return [...wsr.appended] },
+      async attachSession(id) { if (!wsr.appended.includes(id)) wsr.appended.push(id) },
+    }
+  },
+}
+const w8 = makeCtx2({ workspaceRegistry })
+const server8 = new MockServer()
+const config8 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: false,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge8 = new QQBridge(w8.ctx, config8, server8, { info() {}, warn() {}, error() {} })
+bridge8.start()
+await new Promise((r) => setTimeout(r, 400))
+server8.emit('message', {
+  bot: server8.socket, userId: 1001, messageType: 'private', groupId: 0, text: '工作区里的一条', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'w1', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 500))
+check('续接的工作区会话被登记进 workspaceRegistry', wsr.appended.includes(WS_SESSION), JSON.stringify(wsr.appended))
+check('启动回填把工作区目录下未登记的会话补上', wsr.appended.includes(WS_EXTRA), JSON.stringify(wsr.appended))
+check('成员登记写进 trace（stage=workspace）', hasStage(bridge8, 'workspace'),
+  JSON.stringify((bridge8.trace?.recent({ limit: 5, stage: 'workspace' }) ?? []).map((e) => e.reason)))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
