@@ -879,3 +879,28 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
   导出/读取器回落与 mtime 重载/**端到端**（库里给基础角色补 shell → 该群会话真的挂上能跑 shell 的 preset）。
 - 生效顺序（重要）：库存在时**库说了算**，profile 里的 identity 只用于"库不存在时的兜底"和首次引导。
   回滚：删 `qqbot/config/acl.db`（或 `aclEnabled: false`）即回到配置翻译。
+
+### 修：guest 会话的宿主级工具其实一直没被挡住（2026-10-09 23:x，真机日志发现）
+
+- **现象**（真机日志 evidence）：`tool surface g:1062134450: SECURITY LEAK — visible but not granted:
+  session_read, context_handoff, ecs_exec, ecs_status, ecs_upload, n8n_status, n8n_deploy_workflow,
+  gh_run_list, gh_run_view`。日志里 SECURITY LEAK 从 **2026-10-08** 就一直在报（18 次），
+  "自检通过" 一次都没有 —— 也就是说这条漏洞在本次重构之前就存在。
+- **根因**（两级）：
+  1. `tools.restrict()` 要求白名单里的名字都是**可限制的全局工具**；我们给的
+     `[read, glob, grep, web_search, web_fetch]` 里 read/glob/grep 是 preset 层、
+     web_search/web_fetch 是桥接 scoped 注册 —— 真机上直接抛
+     "names unknown global tools"，**裁剪整段失效**；旧代码写的是 `allow: []`（不抛，能生效），
+     我改成白名单之后连那部分都失效了 → 这是本轮引入的回退，已修。
+  2. 更根本的：`restrict` 只能挡**全局**工具，宿主级插件注册进会话的工具
+     （ecs / n8n / gh / session_read / context_handoff）根本挡不住；
+     而失败只写了 `logger.warn`，桥接 debug 日志里看不到，所以漏了一整天没人发现。
+- **修法**：
+  1. restrict 失败自动回落 `{ allow: [] }`（把可限制的全局工具全挡），
+     并且把"用了什么/为什么回落"写进 **debug 日志**（不再只写 logger.warn）；
+  2. 真正的兜底：注册 `tools.guard()` —— 按工具面的**允许集合拒绝执行**任何未授权工具，
+     guard 对任何层级都生效，绕不过去；理由里写清是哪个主体；
+  3. 自检措辞纠正：可见 ≠ 可执行（guard 会拒），真正的告警改成"guard 注册失败"。
+- **测试**：`test/tool-surface-unit.mjs` 增至 32 项，新增 guard 语义（放行 read/web_search、
+  拒绝 ecs/n8n/gh/session_read/context_handoff/bash/write、理由含主体、无名字不插手、
+  超管不注册 guard）。

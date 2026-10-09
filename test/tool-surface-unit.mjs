@@ -109,13 +109,14 @@ function makeCtx() {
   const build = async (sessionId, options) => {
     const record = {
       sessionId: String(sessionId), meta: options.meta ?? {},
-      restrict: [], tools: [], followups: [],
+      restrict: [], guards: [], tools: [], followups: [],
     }
     const agentCtx = {
       systemPrompt: { section: () => {} },
       tools: {
         register: (tool) => record.tools.push(tool?.name ?? '(anon)'),
         restrict: (spec) => record.restrict.push(spec),
+        guard: (fn) => record.guards.push(fn),
         get: () => undefined,
       },
     }
@@ -218,6 +219,20 @@ const adminSession = b.built[b.built.length - 1]
 check('超管会话挂完整 preset', adminSession.meta.agentPreset === 'qq-coding', String(adminSession.meta.agentPreset))
 check('超管会话不做裁剪（全都要，不能因为漏列就丢掉宿主工具）', adminSession.restrict.length === 0, JSON.stringify(adminSession.restrict))
 check('超管会话注册了发图/发文件工具', adminSession.tools.includes('qq_send_image') && adminSession.tools.includes('qq_send_file'), adminSession.tools.join(','))
+
+// ===== 3. guard：可见 ≠ 可执行（真机上 restrict 会整段失效，靠它兜底） =====
+check('访客会话注册了 guard（按允许集合拒绝执行）', guestSession.guards.length === 1, String(guestSession.guards.length))
+const guestGuard = guestSession.guards[0]
+if (guestGuard) {
+  check('guard 放行已授权的工具（read / web_search）',
+    guestGuard({ name: 'read' }) === undefined && guestGuard({ name: 'web_search' }) === undefined)
+  check('guard 拒绝未授权的宿主级工具（ecs_exec / session_read / bash）',
+    [ 'ecs_exec', 'n8n_status', 'gh_run_list', 'session_read', 'context_handoff', 'bash', 'write' ]
+      .every((name) => typeof guestGuard({ name }) === 'string'), String(guestGuard({ name: 'ecs_exec' })))
+  check('guard 拒绝理由里写清是哪个主体', String(guestGuard({ name: 'ecs_exec' })).includes('group:2001'), String(guestGuard({ name: 'ecs_exec' })))
+  check('guard 对没有名字的调用不插手', guestGuard({}) === undefined && guestGuard(undefined) === undefined)
+}
+check('超管会话不注册 guard（全都要，别误伤）', adminSession.guards.length === 0, String(adminSession.guards.length))
 
 b.bridge.stop()
 rmSync(root, { recursive: true, force: true })
