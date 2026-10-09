@@ -268,3 +268,41 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
   再把 `cordis.patch.yml` 的 `visionMode` 改回 `tool`、删掉 `groupImageView` 后重启。
 - 自检：重启后 `qq-bridge-debug.log` 搜 `message image saved`（落盘成功）与
   `native image attach failed`（附件失败）；后者若出现，说明图片没进上下文，需要看具体错误。
+
+## 会话所有权（阶段 2 第一批：启动占位 + 永不 fork）（2026-10-09，用户要求）
+
+### 背景
+宿主重启后，"谁先碰到会话谁就是 writer"。网页端（冷会话被打开时会 resume）经常抢先，
+而桥接旧逻辑抢不到就**新建一条会话**，于是 QQ 侧的上下文被拆散
+（实测 2026-10-09 02:25、02:34 各发生一次；muzu6cn9 -> muzv9i7c -> muzvkzan 都是这么来的）。
+
+### 改动文件
+- `lib/index.js`：新增配置项
+  `preclaimSessions`(true) / `reconcileSessions`(true) / `claimSessionTransfer`(true)
+  / `sessionClaimRetries`(3) / `sessionClaimRetryMs`(1500)
+- `lib/bridge.js`（均带 `[本地补丁]` 标记）
+  1. `#bindSession(key, sessionId)`：绑定**单一事实源**。绑了工作区写 `qq-workspaces.json`，
+     否则写 `qq-sessions.json`。原三处分散写入已全部改为调用它。
+  2. `#isWriterHeld(error)`：识别 DSH 的 `SessionAlreadyOwnedError` / `writer-held`。
+  3. `#resolveOwnershipConflict(...)`：占用冲突时先按 `sessionClaimRetries` 重试续接；
+     仍失败则**明确报错并保留绑定**，把错误抛到消息主路径（catch 会回给 QQ），绝不再新建。
+     冲突错误带 `dshSessionConflict=true`，`#openSession` 的工作区分支会照原样向上抛，
+     不会被"新建会话"兜底吞掉。
+  4. `#preclaimSessions()` + `start()` 里 `void this.#preclaimSessions()`：宿主启动后
+     立刻把各聊天绑定的会话抢到自己名下（只续接、绝不新建；guest 跳过；单个失败只 debug）。
+  5. `#syntheticMessageForKey(key)`：由 chatKey（`u:<id>` / `g:<id>[:u:<id>]`）造最小 message，
+     供启动占位解析 route/role。
+
+### 验证
+- `node test/workspace-unit.mjs` 18 passed / 0 failed（绑定重构未回归）
+- `node test/session-ownership-unit.mjs` 7 passed / 0 failed（新增）
+  - 会话被占用 -> 不新建、给出人话提示、绑定不变
+  - 启动占位 -> 续接绑定会话且不新建
+- `node test/control-unit.mjs` 159 passed / 4 failed（与 main 完全一致，Windows NapCat 启动器用例在 Linux 上本就不通过）
+
+### 生效方式与回滚
+`git merge` 到 main 后重启 dsh web 生效（部署是 symlink）。回滚：切回上一个 commit 并重启。
+
+### 尚未做（阶段 2 第二批）
+`context-handoff/requested` 的认领处理（消费者自建接续会话 + 事务化重绑 + 广播 committed + QQ 通知）、
+启动对账 `reconcileSessions`（沿 parentSession 跟随 handoff 子会话）、输出可见性埋点。
