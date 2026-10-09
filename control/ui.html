@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>小鲸鱼控制台</title>
+<style>
+  :root { --bg:#0f1720; --panel:#17222e; --line:#243447; --fg:#e6edf3; --dim:#8aa0b4; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#4a9eff; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 "Microsoft YaHei",system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; align-items:center; gap:10px; padding:12px 18px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header .spacer { flex:1; }
+  .pill { padding:2px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); color:var(--dim); white-space:nowrap; }
+  .pill.on { color:#0d1117; background:var(--ok); border-color:var(--ok); }
+  .pill.off { color:var(--bad); border-color:var(--bad); }
+  .pill.warn { color:#0d1117; background:var(--warn); border-color:var(--warn); cursor:pointer; }
+  main { padding:14px 18px 60px; display:grid; gap:14px; grid-template-columns: minmax(320px,1fr) minmax(380px,1.15fr); align-items:start; }
+  @media (max-width: 1000px) { main { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; min-width:0; }
+  .card h2 { font-size:13px; margin:0 0 10px; color:var(--dim); font-weight:600; letter-spacing:.5px; display:flex; align-items:center; gap:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { text-align:left; padding:5px 4px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--bad); }
+  .dot.on { background:var(--ok); }
+  button, select, input { background:#22303f; color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:6px 10px; cursor:pointer; font-size:13px; }
+  button:hover, select:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600; }
+  button.danger { border-color:#5c2b2b; color:#ffb4ae; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  input[type=text] { cursor:text; width:100%; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; align-items:center; }
+  pre { margin:0; padding:10px; background:#0b131b; border:1px solid var(--line); border-radius:8px; max-height:300px; overflow:auto; font-size:12px; line-height:1.45; white-space:pre-wrap; word-break:break-all; }
+  .meta { color:var(--dim); font-size:12px; }
+  .warnbox { border-color:#5a4620; background:#241d0f; color:#f0d08a; }
+  .badbox { border-color:#5c2b2b; background:#241010; color:#ffb4ae; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .stream { max-height:360px; overflow:auto; }
+  .stream table { font-size:12px; }
+  .stream tr { cursor:pointer; }
+  .stream tr:hover { background:#1d2a38; }
+  .lv { font-weight:600; }
+  .lv.error { color:var(--bad); } .lv.warn { color:var(--warn); } .lv.info { color:var(--accent); } .lv.debug { color:var(--dim); }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  .chain li { margin-bottom:4px; font-family:Consolas,monospace; font-size:12px; }
+  .check { display:flex; gap:8px; align-items:flex-start; padding:3px 0; border-bottom:1px solid #1c2836; }
+  .check .hint { color:var(--dim); font-size:12px; }
+  .toast { position:fixed; right:16px; bottom:16px; background:#1d2a38; border:1px solid var(--line); padding:10px 14px; border-radius:8px; max-width:60ch; opacity:0; transition:.2s; z-index:20; }
+  .toast.show { opacity:1; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:2px 10px; font-size:12px; }
+  .kv b { color:var(--dim); font-weight:500; }
+  code { background:#0b131b; padding:0 4px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐋 小鲸鱼控制台</h1>
+  <span id="botPill" class="pill">机器人：未知</span>
+  <span id="hostPill" class="pill">宿主：未知</span>
+  <span id="bridgePill" class="pill">桥：未知</span>
+  <span id="errPill" class="pill" title="最近事件里的 error / warn">事件：-</span>
+  <span id="connPill" class="pill off" style="display:none">⚠️ 面板连接失败</span>
+  <span class="spacer"></span>
+  <span class="meta" id="stamp"></span>
+  <button onclick="refresh()">刷新</button>
+  <button onclick="runDiagnose()">一键体检</button>
+  <button onclick="exportBundle()">导出诊断包</button>
+  <label class="meta" title="QQ 号按位掩码、消息原文只留长度；要发给别人排查请保持勾选"><input type="checkbox" id="exportRedact" checked /> 脱敏</label>
+</header>
+
+<main>
+  <section class="card">
+    <h2>端口 / 进程</h2>
+    <table>
+      <thead><tr><th>端口</th><th>用途</th><th>状态</th><th>PID / 进程</th><th></th></tr></thead>
+      <tbody id="ports"></tbody>
+    </table>
+    <div class="meta" id="procMeta" style="margin-top:10px"></div>
+  </section>
+
+  <section class="card">
+    <h2>操作</h2>
+    <div class="row">
+      <button class="primary" onclick="act('/api/host/start')">启动宿主</button>
+      <button onclick="act('/api/host/restart')">重启宿主</button>
+      <button class="danger" onclick="act('/api/host/stop')">停止宿主</button>
+    </div>
+    <div class="row">
+      <button onclick="act('/api/napcat/start')">启动 NapCat</button>
+      <button class="danger" id="napcatStopBtn" onclick="act('/api/napcat/stop')">停止 NapCat（含其 QQ 子进程）</button>
+      <button onclick="act('/api/tts/start')">启动 GPT-SoVITS</button>
+      <button class="danger" onclick="act('/api/tts/stop')">停止 GPT-SoVITS</button>
+    </div>
+    <div class="row">
+      <button class="danger" onclick="act('/api/all/stop')">全部停止</button>
+      <a id="hostLink" href="#" target="_blank" style="display:none"><button>打开机器人控制台（3080）</button></a>
+      <a id="napcatLink" href="#" target="_blank"><button>QQ助手账号</button></a>
+    </div>
+    <div class="grid2" style="margin-top:10px">
+      <label class="meta">宿主工作目录<input id="cfgCwd" /></label>
+      <label class="meta">dsh bin.js 路径<input id="cfgDshBin" /></label>
+      <label class="meta">NapCat 启动脚本<input id="cfgNapcatBat" /></label>
+      <label class="meta">GPT-SoVITS 启动脚本<input id="cfgTtsBat" /></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="saveConfig()">保存路径配置</button>
+      <span class="meta">端口改动请编辑 qq-control.json（避免误改 6700）</span>
+    </div>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>硬约束验收台 <span class="meta" id="acceptMeta">（v0.4「一切皆可调试」6 条硬约束的实时证据）</span></h2>
+    <div class="row">
+      <button onclick="loadAcceptance()">重新验收</button>
+      <span class="meta">每条都用机器上现有的产物算证据；❌/⚠️ 会直接说明该点哪里</span>
+    </div>
+    <div id="acceptance" class="meta">（加载中…）</div>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>实时事件流 <span class="meta" id="streamMeta">（桥的每个决策都在这里，含静默丢弃）</span></h2>
+    <div class="row">
+      <select id="fLevel" onchange="renderStream()">
+        <option value="">全部级别</option>
+        <option value="error">error</option>
+        <option value="warn">warn</option>
+        <option value="info">info</option>
+        <option value="debug">debug</option>
+      </select>
+      <select id="fOk" onchange="renderStream()">
+        <option value="">全部结果</option>
+        <option value="false">仅被拒/失败</option>
+        <option value="true">仅成功</option>
+      </select>
+      <input type="text" id="fStage" placeholder="stage 过滤（如 mention / agent / reply）" style="max-width:260px" oninput="renderStream()" />
+      <input type="text" id="fChat" placeholder="会话过滤（如 g:2007407）" style="max-width:200px" oninput="renderStream()" />
+      <label class="meta"><input type="checkbox" id="pauseStream" /> 暂停</label>
+      <label class="meta"><input type="checkbox" id="autoScroll" checked /> 自动滚动</label>
+      <button onclick="clearStream()">清屏</button>
+      <span class="meta" id="streamCount"></span>
+    </div>
+    <div class="stream" id="streamBox">
+      <table><thead><tr><th style="width:88px">时间</th><th style="width:58px">级别</th><th style="width:78px">阶段</th><th>原因 / 详情</th><th style="width:64px">耗时</th><th style="width:96px">会话</th></tr></thead>
+      <tbody id="stream"></tbody></table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>决策链 <span class="meta" id="chainId">（点事件流里的任意一行）</span></h2>
+    <pre id="chain">（尚未选择 trace）</pre>
+  </section>
+
+  <section class="card">
+    <h2>一键体检 <span class="meta" id="diagMeta"></span></h2>
+    <div id="diag" class="meta">点右上角「一键体检」运行。</div>
+  </section>
+
+  <section class="card">
+    <h2>运行快照 <span class="meta" id="runtimeMeta"></span></h2>
+    <div id="runtime" class="meta">宿主/桥未运行时没有快照。</div>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>录制 · 回放 · 注入 <span class="meta" id="inboxMeta">（桥收到的每条消息都被录下来，可离线重跑）</span></h2>
+    <div class="row">
+      <button onclick="loadInbox(true)">刷新录制列表</button>
+      <button onclick="replayRecent(5)">回放最近 5 条</button>
+      <label class="meta">回放条数 <input type="number" id="replayLimit" value="5" min="1" max="20" style="width:64px" /></label>
+      <span class="meta" id="replayState"></span>
+    </div>
+    <div class="stream" style="max-height:260px">
+      <table><thead><tr><th style="width:52px">序号</th><th style="width:132px">时间</th><th style="width:60px">类型</th><th>内容</th><th style="width:150px">操作</th></tr></thead>
+      <tbody id="inbox"><tr><td colspan="5" class="meta">（尚未加载）</td></tr></tbody></table>
+    </div>
+    <h2 style="margin-top:12px">回放结果 <span class="meta">（沙箱内跑真实管线，dry-run 拦截所有出站；模型回复为模拟文本）</span></h2>
+    <pre id="replayOut">（点上面任意一行的「回放」）</pre>
+    <h2 style="margin-top:12px">事件注入 <span class="meta">（写一行到注入队列，桥轮询后走真实管线；默认 dry-run，不会真发 QQ）</span></h2>
+    <div class="row">
+      <select id="injKind">
+        <option value="message">消息 message</option>
+        <option value="notice">通知 notice</option>
+        <option value="request">请求 request</option>
+      </select>
+      <input type="text" id="injGroup" placeholder="群号（私聊留空）" style="max-width:150px" />
+      <input type="text" id="injUser" placeholder="发消息的 QQ 号（必填）" style="max-width:180px" />
+      <input type="text" id="injText" placeholder="消息文本" style="max-width:280px" />
+      <label class="meta"><input type="checkbox" id="injAtMe" checked /> 群里 @ 机器人</label>
+      <button onclick="doInject()">注入</button>
+      <button class="danger" onclick="clearQueue()">清空注入队列（进回收站）</button>
+      <span class="meta" id="injState"></span>
+    </div>
+    <h2 style="margin-top:12px">注入场景库 <span class="meta">（内置场景各验一条链路；缺参数会直接说缺什么）</span></h2>
+    <div class="row">
+      <select id="scenPick" style="max-width:320px"></select>
+      <input type="text" id="scenGroup" placeholder="群号" style="max-width:130px" />
+      <input type="text" id="scenUser" placeholder="QQ 号" style="max-width:150px" />
+      <input type="text" id="scenTarget" placeholder="被操作 QQ（踢人场景用）" style="max-width:190px" />
+      <button onclick="runScenario()">一键注入场景</button>
+      <span class="meta" id="scenNote"></span>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button onclick="replayDiff()">回放 diff（配置对比）</button>
+      <input type="text" id="diffVariant" placeholder='要对比的配置，如 {"keywordEnabled": true}' style="max-width:320px" />
+      <span class="meta" id="diffState"></span>
+    </div>
+    <pre id="diffOut">（点「回放 diff」：同一批录到的消息跑两次回放——基线 vs 你写的配置覆盖——机械地比出差异）</pre>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>群资产 · 历史检索 <span class="meta" id="archiveMeta">（本机归档 <code>qq-history/</code>，群里 <code>/找</code> 用的就是它；控制台直接读文件，不打扰宿主）</span></h2>
+    <div class="row">
+      <button onclick="loadArchive()">刷新概览</button>
+      <input type="text" id="archQ" placeholder="关键词（空格分隔 = 同时包含）" style="max-width:260px" />
+      <label class="meta">天数 <input type="number" id="archDays" value="7" min="1" max="365" style="width:70px" /></label>
+      <input type="text" id="archChat" placeholder="会话键，如 g:123（可留空）" style="max-width:190px" />
+      <button onclick="searchArchive()">检索</button>
+      <span class="meta" id="archState"></span>
+    </div>
+    <pre id="archOut">（点「刷新概览」看归档体积与时间范围）</pre>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>性能面板 <span class="meta" id="perfMeta">（按「一条消息的 trace 链」算端到端延迟；P50/P95 直接来自真实事件）</span></h2>
+    <div class="row">
+      <button onclick="loadPerf()">刷新</button>
+      <input type="text" id="perfChat" placeholder="只看某个会话，如 g:123（可留空）" style="max-width:230px" />
+      <label class="meta">时间窗 <select id="perfWindow">
+        <option value="0">全部</option>
+        <option value="30">30 分钟</option>
+        <option value="120">2 小时</option>
+        <option value="1440">24 小时</option>
+      </select></label>
+      <span class="meta" id="perfState"></span>
+    </div>
+    <div id="perfSummary" class="meta"></div>
+    <table id="perfChats" style="display:none"></table>
+    <pre id="perfOut">（点「刷新」看延迟分位数、阶段耗时与失败画像）</pre>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>定时任务 · 无人值守 <span class="meta" id="jobsMeta">（播报任务 / 入站 webhook / 掉线自愈 / 注入队列，全部来自桥写的运行快照）</span></h2>
+    <div class="row">
+      <button onclick="loadJobs()">刷新</button>
+      <span class="meta" id="jobsState"></span>
+    </div>
+    <pre id="jobsOut">（点「刷新」看任务清单与下次触发时间）</pre>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>群配置 <span class="meta" id="groupsMeta">（每个群的生效开关 + 白名单 + 最近回合）</span></h2>
+    <div class="row">
+      <button onclick="loadGroups()">刷新</button>
+      <span class="meta" id="groupsState"></span>
+    </div>
+    <div id="groupsSwitches" class="meta"></div>
+    <pre id="groupsOut">（点「刷新」看每个群的生效状态）</pre>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>登录二维码 <span class="meta" id="qrMeta">（NapCat 只在 QQ 侧产出新码时刷新一次；过期后文件就不再变化，看时间比看"文件在不在"可靠）</span></h2>
+    <div class="row">
+      <button onclick="loadQr()">刷新二维码</button>
+      <button onclick="act('/api/napcat/restart')">重启登录流程（会结束 QQ/NapCat 后重开）</button>
+      <span class="meta" id="qrState"></span>
+    </div>
+    <div style="margin-top:8px"><img id="qrImg" alt="登录二维码" style="display:none;width:220px;height:220px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px" /></div>
+    <pre id="qrHint">（点「刷新二维码」）</pre>
+  </section>
+
+  <section class="card" style="grid-column:1/-1">
+    <h2>日志文件</h2>
+    <div class="row">
+      <button onclick="setLog('hostOut')">宿主 stdout</button>
+      <button onclick="setLog('hostErr')">宿主 stderr</button>
+      <button onclick="setLog('bridge')">桥调试日志</button>
+      <button onclick="setLog('trace')">事件文件</button>
+      <button onclick="setLog('audit')">写操作审计</button>
+      <label class="meta"><input type="checkbox" id="follow" checked /> 自动跟随</label>
+    </div>
+    <pre id="log">（选择一份日志）</pre>
+  </section>
+
+  <section class="card badbox" id="pageErrors" style="grid-column:1/-1; display:none"></section>
+
+  <section class="card warnbox" id="warnCard" style="grid-column:1/-1; display:none">
+    <h2>配置提醒</h2>
+    <div id="warns"></div>
+  </section>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const token = new URLSearchParams(location.search).get('token') || '';
+// 地址里没有 token 时，直接告诉用户为什么满屏都是「token 无效」，而不是让他自己猜：
+// 控制台与宿主 3080 是**两套** token，宿主每次重启还会换新的。
+if (!token) {
+  const box = document.createElement('section');
+  box.className = 'card badbox';
+  box.style.gridColumn = '1/-1';
+  box.innerHTML = '<h2>地址里没有 token</h2>'
+    + '<div>控制台的每个接口都需要 token，所以下面所有面板都会显示「token 无效」。请用启动控制台时窗口里打印的那行完整地址打开，例如：</div>'
+    + '<div style="margin-top:6px"><code>http://127.0.0.1:' + (location.port || '8799') + '/?token=&lt;控制台 token&gt;</code></div>'
+    + '<div style="margin-top:6px" class="meta">控制台 token 固定保存在 <code>qq-control.json</code> 里；<b>宿主 3080 的 token 每次重启都会变</b>，两者不能混用。</div>';
+  document.body.insertBefore(box, document.body.firstChild);
+}
+// stream=0 → 静态模式：不建立 SSE 长连接（弱网/远程查看/自动截图时用）。
+const streamMode = new URLSearchParams(location.search).get('stream') === '0' ? 'off' : 'on';
+let currentLog = 'hostOut';
+let streamEvents = [];
+let diagReport = null;
+let lastRuntime = null;
+const pageErrors = [];
+
+// 面板自己也要可调试：任何脚本错误 / 未处理的 Promise 失败都直接显示出来。
+function reportPageError(text) {
+  pageErrors.push(`${new Date().toLocaleTimeString('zh-CN', { hour12: false })} ${text}`);
+  const el = document.getElementById('pageErrors');
+  if (!el) return;
+  el.style.display = '';
+  el.innerHTML = '<h2>面板脚本错误（请连同这条截图反馈）</h2>' + pageErrors.map((line) => `<div class="check"><span>❌</span><div>${line}</div></div>`).join('');
+}
+window.addEventListener('error', (event) => reportPageError(`${event.message} @ ${event.filename}:${event.lineno}`));
+window.addEventListener('unhandledrejection', (event) => reportPageError(`Promise 失败：${event.reason?.message ?? event.reason}`));
+
+function api(path, options = {}) {
+  const url = path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+  return fetch(url, { ...options, headers: { 'X-Control-Token': token, ...(options.headers || {}) } }).then((r) => r.json());
+}
+function toast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text; el.classList.add('show');
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 4500);
+}
+async function act(path) {
+  const labels = { '/api/host/stop': '停止宿主', '/api/napcat/stop': '停止 NapCat/QQ', '/api/tts/stop': '停止 GPT-SoVITS', '/api/all/stop': '全部停止' };
+  if (labels[path] && !confirm(labels[path] + '？')) return;
+  const result = await api(path, { method: 'POST', body: JSON.stringify({}) });
+  toast((result.ok === false ? '⚠️ ' : '✅ ') + (result.reason || '完成'));
+  setTimeout(refresh, 1200);
+}
+function freePort(name) {
+  if (!confirm('结束占用该端口的进程？')) return;
+  api('/api/port/free', { method: 'POST', body: JSON.stringify({ name }) }).then((r) => { toast((r.ok ? '✅ ' : '⚠️ ') + r.reason); setTimeout(refresh, 1200); });
+}
+function setLog(name) { currentLog = name; loadLog(true); }
+async function loadLog(force) {
+  if (!force && (!document.getElementById('follow').checked || document.hidden)) return;
+  try {
+    const result = await api('/api/logs?name=' + currentLog + '&lines=200');
+    const el = document.getElementById('log');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+    el.textContent = (result.lines || []).join('\n') || '（空）';
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  } catch { /* 轮询失败不打断界面 */ }
+}
+function exportBundle() {
+  const redact = document.getElementById('exportRedact')?.checked === true;
+  window.location = '/api/export?redact=' + (redact ? '1' : '0') + '&token=' + encodeURIComponent(token);
+  toast(redact
+    ? '正在下载脱敏诊断包（QQ 号掩码、消息原文只留长度）'
+    : '正在下载诊断包（含明文消息与 QQ 号，发给别人前请勾选脱敏）');
+}
+async function runDiagnose() {
+  const result = await api('/api/diagnose');
+  diagReport = result.report;
+  renderDiagnose();
+}
+function renderDiagnose() {
+  if (!diagReport) return;
+  const s = diagReport.summary;
+  document.getElementById('diagMeta').textContent = `${s.passed}/${s.total} 通过 · ${s.verdict}`;
+  document.getElementById('diag').innerHTML = diagReport.checks.map((c) => {
+    const icon = c.ok ? '✅' : (c.severity === 'warn' ? '⚠️' : '❌');
+    return `<div class="check"><span>${icon}</span><div><b>${c.title}</b> — ${c.detail}${c.hint ? `<div class="hint">↳ ${c.hint}</div>` : ''}</div></div>`;
+  }).join('');
+}
+function renderRuntime(runtime) {
+  const el = document.getElementById('runtime');
+  if (!runtime) { el.textContent = '宿主/桥未运行时没有快照。'; document.getElementById('runtimeMeta').textContent = ''; return; }
+  document.getElementById('runtimeMeta').textContent = `v${runtime.version} · 更新于 ${runtime.ageSeconds}s 前 · 运行 ${Math.round((runtime.uptimeSeconds || 0) / 60)} 分钟`;
+  const sessions = runtime.sessions || [];
+  const features = runtime.features || {};
+  const off = Object.entries(features).filter(([, v]) => v === false).map(([k]) => k);
+  el.innerHTML = `
+    <div class="kv">
+      <b>会话数</b><span>${runtime.sessionCount}（提醒 ${runtime.reminders} · 投票 ${runtime.votes} · 游戏 ${runtime.games} · 待审 ${runtime.joinsPending}）</span>
+      <b>写操作闸门</b><span>已拒绝 ${runtime.gate?.denied ?? 0} 次</span>
+      <b>事件计数</b><span>${runtime.trace?.total ?? 0} 条（error ${runtime.trace?.byLevel?.error ?? 0} / warn ${runtime.trace?.byLevel?.warn ?? 0}）</span>
+      <b>关闭中的开关</b><span>${off.slice(0, 10).join('、') || '无'}${off.length > 10 ? ` 等 ${off.length} 项` : ''}</span>
+    </div>
+    ${sessions.length ? `<table style="margin-top:8px"><thead><tr><th>会话</th><th>sessionId</th><th>状态</th><th>来源</th><th>最近回合</th></tr></thead><tbody>
+      ${sessions.map((s) => `<tr><td>${s.chatKey}</td><td class="meta">${String(s.sessionId).slice(0, 12)}</td><td>${s.status}</td><td>${s.resumed ? '续接' : '新建'}</td><td class="meta">${s.lastTurnAt ? new Date(s.lastTurnAt).toLocaleTimeString('zh-CN', { hour12: false }) : '-'}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="meta" style="margin-top:6px">当前没有活跃会话（发一条消息给机器人即可建立）。</div>'}`;
+}
+function renderStream() {
+  const level = document.getElementById('fLevel').value;
+  const okFilter = document.getElementById('fOk').value;
+  const stage = document.getElementById('fStage').value.trim().toLowerCase();
+  const chat = document.getElementById('fChat').value.trim();
+  const rows = streamEvents.filter((e) => {
+    if (level && e.level !== level) return false;
+    if (okFilter === 'false' && e.ok !== false) return false;
+    if (okFilter === 'true' && e.ok === false) return false;
+    if (stage && !(e.stage || '').toLowerCase().includes(stage)) return false;
+    if (chat && !(e.chatKey || '').includes(chat)) return false;
+    return true;
+  }).slice(-400).reverse();
+  const box = document.getElementById('stream');
+  box.innerHTML = rows.map((e, index) => {
+    const time = new Date(e.ts).toLocaleTimeString('zh-CN', { hour12: false });
+    const detail = [e.reason, e.data ? JSON.stringify(e.data) : ''].filter(Boolean).join(' ');
+    return `<tr onclick="openChain('${e.id}')" title="点击查看该消息的完整决策链">
+      <td class="meta">${time}</td>
+      <td class="lv ${e.level}">${e.level}${e.ok === false ? ' ✗' : ''}</td>
+      <td>${e.stage || ''}</td>
+      <td>${detail.slice(0, 220)}</td>
+      <td class="meta">${e.ms ? e.ms + 'ms' : ''}</td>
+      <td class="meta">${e.chatKey || ''}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('streamCount').textContent = `${rows.length}/${streamEvents.length} 条`;
+  if (document.getElementById('autoScroll').checked && !document.getElementById('pauseStream').checked) {
+    const streamBox = document.getElementById('streamBox');
+    streamBox.scrollTop = 0;
+  }
+}
+function clearStream() { streamEvents = []; renderStream(); }
+async function openChain(traceId) {
+  if (!traceId) return;
+  const result = await api('/api/trace?traceId=' + encodeURIComponent(traceId));
+  document.getElementById('chainId').textContent = `trace ${traceId}`;
+  const chain = result.chain;
+  if (!chain) { document.getElementById('chain').textContent = '没有这条 trace 的事件（可能已被轮转清理）。'; return; }
+  document.getElementById('chain').textContent =
+    `会话 ${chain.chatKey} · 总耗时 ${chain.durationMs}ms · ${chain.reachedReply ? '已回复' : '未回复'}` +
+    (chain.stoppedAt ? ` · 停在 ${chain.stoppedAt}：${chain.stoppedReason}` : '') + '\n\n' +
+    chain.timeline.join('\n');
+}
+function render(status) {
+  const tbody = document.getElementById('ports');
+  tbody.innerHTML = '';
+  for (const item of status.ports || []) {
+    const tr = document.createElement('tr');
+    const state = item.listening ? `<span class="dot on"></span>监听${item.established ? `（${item.established} 条连接）` : ''}` : '<span class="dot"></span>未监听';
+    tr.innerHTML = `<td>${item.port}</td><td>${item.label}</td><td>${state}</td><td class="meta">${item.pid || '-'} ${item.process || ''}</td>`;
+    const td = document.createElement('td');
+    if (item.listening && item.name !== 'control') {
+      const btn = document.createElement('button');
+      btn.textContent = '释放'; btn.className = 'danger';
+      btn.onclick = () => freePort(item.name);
+      td.appendChild(btn);
+    }
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+  const host = (status.ports || []).find((p) => p.name === 'host');
+  const hostPill = document.getElementById('hostPill');
+  hostPill.textContent = '宿主：' + (host?.listening ? '运行中' : '未运行');
+  hostPill.className = 'pill ' + (host?.listening ? 'on' : 'off');
+  const botPill = document.getElementById('botPill');
+  // v0.5.9：两个来源合起来看——`status.botOnline` 是 6700 上有没有 ESTABLISHED 连接（控制台自己数的），
+  // `runtime.botOnline` 是 NapCat 的 bot_online/bot_offline 通知（null = 这一版桥还没收到过）。
+  // 只看前者会把"账号被顶下线、socket 还挂着"显示成在线；只看后者在旧版桥上是 undefined。
+  const accountOnline = status.runtime?.botOnline;
+  const connected = status.botOnline === true;
+  const botUp = connected && accountOnline !== false;
+  botPill.textContent = '机器人：' + (botUp ? '在线' : accountOnline === false ? '离线（账号掉线）' : '离线');
+  botPill.className = 'pill ' + (botUp ? 'on' : 'off');
+  botPill.title = botUp
+    ? `6700 上有 OneBot 连接${accountOnline === true ? '，NapCat 也报了 bot_online' : ''}`
+    : accountOnline === false
+      ? 'NapCat 报了 bot_offline：QQ 掉线，或同一账号在别处登录（同一客户端再开一个实例会抢会话）'
+      : '6700 上没有已建立的连接（NapCat 可能没在运行）';
+  const bridgePill = document.getElementById('bridgePill');
+  const bridgeAlive = (status.runtime?.ageSeconds ?? 9999) < 900;
+  bridgePill.textContent = '桥：' + (bridgeAlive ? '活跃' : '无快照');
+  bridgePill.className = 'pill ' + (bridgeAlive ? 'on' : 'off');
+  // 「QQ助手账号」按钮（= NapCat 的 WebUI：登录状态 / 扫码）：6099 没在监听时给的是死链，
+  // 这里直接禁用并说明原因。
+  // v0.5.9：链接必须是**带 token 的**——NapCat 的 WebUI 自己有 token（webui.json），
+  // 不带 token 点进去只会看到「token 无效」，这正是用户报的那个坑。
+  // v0.6.3：按钮统一叫「QQ助手账号」（与 DSH 设置页的面板入口同名），落点与插件面板一致
+  // 用 `/webui/?token=`（带尾斜杠的实测形状，见 lib/settings-routes.js 的 napcatWebUiUrl）。
+  const link = document.getElementById('napcatLink');
+  if (link) {
+    const napcatPort = (status.ports || []).find((item) => item.name === 'napcat');
+    const up = napcatPort?.listening === true;
+    const btn = link.querySelector('button');
+    link.href = up ? 'http://127.0.0.1:' + napcatPort.port + '/webui/' : '#';
+    link.removeAttribute('title');
+    if (btn) {
+      btn.disabled = !up;
+      btn.textContent = up ? 'QQ助手账号' : 'QQ助手账号不可用（NapCat 未运行）';
+    }
+    if (up) {
+      // 异步补上 token；拿不到就保留不带 token 的地址，并把原因写在 title 里
+      api('/api/napcat/webui').then((info) => {
+        if (info?.ok === true && info.url) {
+          link.href = info.url;
+          link.title = '已带上 NapCat 自己的 token（来自 bootmain/config/webui.json）';
+        } else {
+          link.title = '未能自动带上 NapCat token：' + (info?.reason || '未知原因') + '（可在 webui.json 里找 token 手动拼接）';
+        }
+      }).catch(() => {});
+    }
+  }
+  const napcat = status.processes?.napcatLoaders || [];
+  const qqClients = status.processes?.qqClients || [];
+  const managed = status.processes?.napcatManaged === true;
+  const qr = status.qr || {};
+  document.getElementById('procMeta').innerHTML =
+    `NapCat 加载器：${napcat.length ? napcat.map((p) => `${p.name}#${p.pid}`).join('、') : '未运行'}｜` +
+    `个人 QQ 客户端：${qqClients.length} 个${managed ? '（受 NapCat 管理）' : '（<b>不受管，控制台不会结束它们</b>）'}｜` +
+    `扫码图：${qr.exists ? (qr.fresh ? `新鲜（${qr.ageSeconds}s 前）` : `较旧（${Math.round(qr.ageSeconds / 60)} 分钟前）`) : '未生成'}`;
+  const napcatStop = document.getElementById('napcatStopBtn');
+  napcatStop.disabled = !managed;
+  napcatStop.title = managed ? '结束 NapCat 加载器（taskkill /T 会连带其 QQ 子进程）' : '未检测到 NapCat，按钮已禁用以免误杀个人 QQ';
+  const hostLink = document.getElementById('hostLink');
+  if (status.hostUrl && host?.listening) { hostLink.href = status.hostUrl; hostLink.style.display = ''; }
+  else hostLink.style.display = 'none';
+  // 注意：napcatLink 的 href 由上面「QQ助手账号按钮」那段统一负责（含带 token 的升级），
+  // 这里**不要**再写一遍不带 token 的地址——那样每 4 秒就会把带 token 的链接覆盖掉，
+  // 用户点到的永远是「token 无效」那个（v0.5.9 全面检测发现）。
+  document.getElementById('stamp').textContent = '刷新于 ' + new Date(status.scannedAt || Date.now()).toLocaleTimeString('zh-CN', { hour12: false });
+  const warnings = status.warnings || [];
+  document.getElementById('warnCard').style.display = warnings.length ? '' : 'none';
+  document.getElementById('warns').innerHTML = warnings.map((w) => '· ' + w).join('<br>');
+  const cfg = status.config || {};
+  if (document.activeElement?.tagName !== 'INPUT') {
+    document.getElementById('cfgCwd').value = cfg.cwd || '';
+    document.getElementById('cfgDshBin').value = cfg.dshBin || '';
+    document.getElementById('cfgNapcatBat').value = cfg.napcatBat || '';
+    document.getElementById('cfgTtsBat').value = cfg.ttsBat || '';
+  }
+}
+async function saveConfig() {
+  const result = await api('/api/config', { method: 'POST', body: JSON.stringify({
+    cwd: document.getElementById('cfgCwd').value,
+    dshBin: document.getElementById('cfgDshBin').value,
+    napcatBat: document.getElementById('cfgNapcatBat').value,
+    ttsBat: document.getElementById('cfgTtsBat').value,
+  }) });
+  toast((result.ok ? '✅ ' : '⚠️ ') + result.reason);
+}
+function updateErrPill() {
+  const errors = streamEvents.filter((e) => e.level === 'error').length;
+  const warns = streamEvents.filter((e) => e.level === 'warn').length;
+  const pill = document.getElementById('errPill');
+  pill.textContent = `事件：${streamEvents.length}（error ${errors} / warn ${warns}）`;
+  pill.className = 'pill ' + (errors > 0 ? 'off' : (warns > 0 ? 'warn' : 'on'));
+}
+async function refresh() {
+  try {
+    const status = await api('/api/status');
+    render(status);
+    lastRuntime = status.runtime ?? null;
+    renderRuntime(status.runtime ?? null);
+    renderInboxMeta();
+    setConnOk(true);
+  } catch (e) {
+    setConnOk(false, e.message);
+  }
+}
+function setConnOk(ok, detail = '') {
+  const pill = document.getElementById('connPill');
+  if (!pill) return;
+  pill.style.display = ok ? 'none' : '';
+  pill.textContent = ok ? '' : '⚠️ 面板连接失败，重试中' + (detail ? `（${detail}）` : '');
+}
+function startStream() {
+  if (streamMode === 'off') {
+    document.getElementById('streamMeta').textContent = '（静态模式：实时流已关闭，点「刷新」看最近事件）';
+    return;
+  }
+  const source = new EventSource('/api/stream?token=' + encodeURIComponent(token));
+  source.onmessage = (message) => {
+    if (document.getElementById('pauseStream').checked) return;
+    try {
+      const event = JSON.parse(message.data);
+      streamEvents.push(event);
+      if (streamEvents.length > 2000) streamEvents = streamEvents.slice(-1500);
+      renderStream();
+      updateErrPill();
+    } catch { /* ignore */ }
+  };
+  source.onerror = () => { /* 浏览器会自动重连 */ };
+}
+async function loadHistory() {
+  const result = await api('/api/trace?limit=300');
+  streamEvents = result.events || [];
+  renderStream();
+  updateErrPill();
+}
+
+// ------------------------------------------------ 硬约束验收台（阶段 4） ----
+const ACCEPT_TARGETS = { silent: 'streamBox', trace: 'chain', replay: 'replayOut', diagnose: 'diag', export: 'log', inject: 'injState' };
+const ACCEPT_ICONS = { pass: '✅', warn: '⚠️', fail: '❌', unknown: '❔' };
+const ACCEPT_VERDICTS = { 'all-green': '6 条全部达标', partial: '全部达标（有提示项）', unknown: '证据不足（有未验证项）', broken: '有不达标项' };
+let acceptReport = null;
+async function loadAcceptance() {
+  const el = document.getElementById('acceptance');
+  try {
+    const result = await api('/api/acceptance');
+    if (!result.report) { el.textContent = '⚠️ ' + (result.reason || '验收接口没有返回报告'); return; }
+    acceptReport = result.report;
+    renderAcceptance();
+  } catch (error) {
+    el.textContent = `读取验收结果失败：${error.message}`;
+  }
+}
+function renderAcceptance() {
+  if (!acceptReport) return;
+  const t = acceptReport.totals || {};
+  document.getElementById('acceptMeta').textContent =
+    `（${t.pass ?? 0}/6 达标 · ${ACCEPT_VERDICTS[acceptReport.verdict] ?? acceptReport.verdict} · ${new Date(acceptReport.generatedAt).toLocaleTimeString('zh-CN', { hour12: false })}）`;
+  document.getElementById('acceptance').innerHTML = acceptReport.items.map((item) => {
+    const target = ACCEPT_TARGETS[item.key];
+    return `<div class="check"><span>${ACCEPT_ICONS[item.status] ?? '·'}</span><div><b>${item.title}</b> — ${escapeHtml(item.evidence)}` +
+      (item.hint ? `<div class="hint">↳ ${escapeHtml(item.hint)}</div>` : '') +
+      (target ? ` <a href="javascript:void 0" onclick="focusCard('${target}')" class="meta">去看 →</a>` : '') +
+      '</div></div>';
+  }).join('');
+}
+function focusCard(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const card = el.closest('section') || el;
+  card.style.outline = '2px solid #6cf';
+  setTimeout(() => { card.style.outline = 'none'; }, 1600);
+}
+
+// ---------------------------------------------------- 录制 / 回放 / 注入 ----
+let inboxLoadedAt = 0;
+let lastInbox = null;
+function renderInboxMeta() {
+  const el = document.getElementById('inboxMeta');
+  if (!lastInbox) { el.textContent = '（正在读取录制列表…）'; return; }
+  const injection = lastRuntime?.injection;
+  const queueText = injection
+    ? `注入队列 ${lastInbox.queued} 行 · 本次运行已消费 ${injection.consumed ?? 0} 条 · dry-run=${injection.dryRun ? '开' : '关'}`
+    : `注入队列 ${lastInbox.queued} 行`;
+  el.textContent = `（录制 ${lastInbox.recorded} 条 · ${queueText} · 文件 ${lastInbox.file || '未配置'}${lastInbox.exists ? '' : '（还没生成）'}）`;
+}
+async function loadInbox(force = false) {
+  if (!force && (document.hidden || Date.now() - inboxLoadedAt < 8000)) return;
+  try {
+    const result = await api('/api/inbox?limit=50');
+    const body = document.getElementById('inbox');
+    const entries = result.entries || [];
+    lastInbox = result;
+    renderInboxMeta();
+    if (entries.length === 0) {
+      body.innerHTML = '<tr><td colspan="5" class="meta">还没有录制记录：需要插件配置 recordInbound=true（默认开）且桥至少收到过一条消息。</td></tr>';
+      inboxLoadedAt = Date.now();
+      return;
+    }
+    body.innerHTML = entries.slice().reverse().map((item) => `<tr>
+      <td class="meta">${item.index}</td>
+      <td class="meta">${item.at}</td>
+      <td>${item.kind}</td>
+      <td title="${escapeAttr(JSON.stringify(item.frame || {}))}">${escapeHtml(item.text)}</td>
+      <td><button onclick="replayOne(${item.index})">回放这条</button></td>
+    </tr>`).join('');
+    inboxLoadedAt = Date.now();
+  } catch (error) {
+    document.getElementById('inboxMeta').textContent = `（读取录制失败：${error.message}）`;
+  }
+}
+function escapeHtml(text) { return String(text ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function escapeAttr(text) { return escapeHtml(text).replace(/"/g, '&quot;'); }
+function replayOne(index) { replayEntries({ indices: [index] }); }
+function replayRecent(limit) {
+  const count = Number(document.getElementById('replayLimit')?.value) || limit || 5;
+  replayEntries({ limit: count });
+}
+async function replayEntries(payload) {
+  const out = document.getElementById('replayOut');
+  const state = document.getElementById('replayState');
+  state.textContent = '回放中…（沙箱启动 + 真实管线）';
+  try {
+    const result = await api('/api/replay', { method: 'POST', body: JSON.stringify(payload) });
+    if (result.ok === false && !result.text) {
+      out.textContent = '⚠️ ' + (result.reason || '回放失败');
+      state.textContent = '';
+      return;
+    }
+    out.textContent = result.text || '(空报告)';
+    const t = result.totals || {};
+    state.textContent = `${t.entries || 0} 条：${t.replied || 0} 会回复 / ${t.silent || 0} 静默 / ${t.error || 0} 出错`;
+    loadAcceptance();   // 回放成功后 ③ 那条约束的证据就变了，顺手刷新验收台
+  } catch (error) {
+    out.textContent = '回放请求失败：' + error.message;
+    state.textContent = '';
+  }
+}
+async function doInject() {
+  const kind = document.getElementById('injKind').value;
+  const rawUser = document.getElementById('injUser').value.trim();
+  if (!/^\d{4,12}$/.test(rawUser)) {
+    document.getElementById('injState').textContent = '⚠️ 请填写发消息的 QQ 号（4-12 位数字）';
+    return;
+  }
+  const spec = {
+    kind,
+    userId: Number(rawUser),
+    groupId: Number(document.getElementById('injGroup').value) || 0,
+    text: document.getElementById('injText').value,
+    atMe: document.getElementById('injAtMe').checked,
+  };
+  if (kind === 'notice') { spec.noticeType = 'notify'; spec.subType = 'poke'; }
+  if (kind === 'request') { spec.requestType = spec.groupId ? 'group' : 'friend'; }
+  const result = await api('/api/inject', { method: 'POST', body: JSON.stringify(spec) });
+  document.getElementById('injState').textContent = (result.ok ? '✅ ' : '⚠️ ') + (result.reason || '');
+  toast((result.ok ? '✅ ' : '⚠️ ') + (result.reason || '完成'));
+  if (result.ok) setTimeout(() => loadInbox(true), 1500);
+}
+async function clearQueue() {
+  if (!confirm('把注入队列移入回收站？（不会真正删除）')) return;
+  const result = await api('/api/queue/clear', { method: 'POST', body: JSON.stringify({}) });
+  document.getElementById('injState').textContent = (result.ok ? '✅ ' : '⚠️ ') + (result.reason || '');
+  loadInbox(true);
+}
+async function loadArchive() {
+  const out = document.getElementById('archOut');
+  const state = document.getElementById('archState');
+  state.textContent = '读取中…';
+  try {
+    const r = await api('/api/archive');
+    if (!r.ok) { state.textContent = ''; out.textContent = '⚠️ ' + (r.reason || '读取失败'); return; }
+    const kb = Math.round((r.bytes || 0) / 1024);
+    out.textContent = [
+      '归档目录：' + r.dir + (r.exists === false ? '（还不存在：要么还没有消息落盘，要么 historyArchiveDir 指向别处）' : ''),
+      '分片文件：' + (r.files || 0) + ' 个 · 合计 ' + kb + ' KB',
+      '时间范围：' + (r.oldest || '—') + '  →  ' + (r.newest || '—'),
+      '本机回收目录：' + ((r.trashDirs || []).join(', ') || '（空）'),
+    ].join('\n');
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '';
+    out.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function loadPerf() {
+  const out = document.getElementById('perfOut');
+  const state = document.getElementById('perfState');
+  const summary = document.getElementById('perfSummary');
+  const chat = document.getElementById('perfChat').value.trim();
+  const windowMinutes = Number(document.getElementById('perfWindow').value) || 0;
+  state.textContent = '统计中…';
+  try {
+    const qs = 'limit=5000&window=' + windowMinutes + (chat ? '&chatKey=' + encodeURIComponent(chat) : '');
+    const r = await api('/api/perf?' + qs);
+    if (r.ok !== true) { state.textContent = ''; out.textContent = '⚠️ ' + (r.reason || '性能面板不可用'); summary.textContent = ''; return; }
+    summary.textContent = r.verdict + (r.chains.avg === null ? '' : '（平均 ' + r.chains.avg + 'ms，样本 ' + r.chains.count + ' 条）');
+    const lines = [];
+    if ((r.stages || []).length > 0) {
+      lines.push('阶段耗时（只统计记了时的阶段）：');
+      for (const s of r.stages.slice(0, 8)) lines.push('  ' + s.stage + '：P50 ' + (s.p50 ?? '—') + 'ms · P95 ' + (s.p95 ?? '—') + 'ms · 最慢 ' + (s.max ?? '—') + 'ms · ' + s.count + ' 次');
+    }
+    if ((r.slowest || []).length > 0) {
+      lines.push('');
+      lines.push('最慢的几条消息：');
+      for (const c of r.slowest) lines.push('  ' + c.ms + 'ms · ' + (c.chatKey || '未知会话') + ' · ' + (c.failed ? '有失败' : '正常') + ' · ' + c.id);
+    }
+    const errs = r.errors || { failed: 0, byStage: [] };
+    lines.push('');
+    lines.push('失败画像：共 ' + errs.failed + ' 条（debug 级的"未启用"不算事故）');
+    for (const s of (errs.byStage || []).slice(0, 5)) {
+      lines.push('  ' + s.stage + '：' + s.count + ' 条 → ' + (s.topReasons[0] ? s.topReasons[0].reason + '（' + s.topReasons[0].count + ' 次）' : ''));
+    }
+    out.textContent = lines.join('\n') || '（窗口内还没有事件）';
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '';
+    out.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function loadJobs() {
+  const out = document.getElementById('jobsOut');
+  const state = document.getElementById('jobsState');
+  state.textContent = '读取中…';
+  try {
+    const r = await api('/api/jobs');
+    if (r.ok !== true) { state.textContent = ''; out.textContent = '⚠️ ' + (r.reason || '定时任务面板不可用'); return; }
+    const lines = [];
+    lines.push('定时播报：' + (r.broadcast.enabled ? '启用中' : '未启用') + '（' + r.broadcast.enabledCount + '/' + r.broadcast.total + ' 个任务启用）');
+    for (const job of r.broadcast.rows) {
+      lines.push('  ' + (job.enabled ? '●' : '○') + ' ' + job.id + '（' + job.kind + '）→ ' + (job.chat || '未指定会话')
+        + ' · 下次 ' + job.nextText + (job.lastReason ? ' · 上次：' + job.lastReason : '')
+        + ' · 成功 ' + job.runs + ' 次 / 失败 ' + job.failures + ' 次' + (job.health === '一直在失败' ? ' ⚠️' : ''));
+    }
+    lines.push('');
+    lines.push('入站 webhook：' + (r.webhook.enabled ? '监听 127.0.0.1:' + r.webhook.port : '未启用'));
+    for (const s of (r.webhook.sources || [])) lines.push('  ' + s.name + '：收到 ' + s.received + ' · 丢弃 ' + s.dropped);
+    lines.push('');
+    lines.push('掉线自愈：' + (r.autoHeal.enabled ? '启用' : '未启用')
+      + '（命令' + (r.autoHeal.commandConfigured ? '已配置' : '未配置') + '，冷却 ' + r.autoHeal.cooldownSeconds + 's，上限 ' + r.autoHeal.maxPerHour + ' 次/小时，最近一小时 ' + (r.autoHeal.attemptsLastHour ?? 0) + ' 次）');
+    lines.push('注入队列：' + (r.injection.enabled ? (r.injection.queued + ' 行待消费 · 已消费 ' + r.injection.consumed + ' · dry-run ' + (r.injection.dryRun ? '开' : '关') + ' · 轮询 ' + r.injection.intervalMs + 'ms') : '未启用'));
+    out.textContent = lines.join('\n');
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '';
+    out.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function loadGroups() {
+  const out = document.getElementById('groupsOut');
+  const state = document.getElementById('groupsState');
+  const switches = document.getElementById('groupsSwitches');
+  state.textContent = '读取中…';
+  try {
+    const r = await api('/api/groups');
+    if (r.ok !== true) { state.textContent = ''; out.textContent = '⚠️ ' + (r.reason || '群配置页不可用'); return; }
+    switches.textContent = '生效开关（' + r.onCount + '/' + r.switches.length + ' 开）：'
+      + r.switches.map((s) => (s.on ? '✅' : '⬜') + s.label).join(' · ');
+    const lines = [];
+    if ((r.groups || []).length === 0) lines.push('还没有群会话（桥启动后收到过群消息才会出现）。');
+    for (const g of r.groups) {
+      const allowed = g.allowlisted === null ? '白名单未知' : (g.allowlisted ? '在白名单' : '⚠️ 不在白名单');
+      const admin = g.botAdmin ? ' · 机器人：' + g.botAdmin.text : '';
+      lines.push('群 ' + g.groupId + ' · ' + allowed + ' · 会话 ' + (g.sessionId || '—') + ' · 状态 ' + g.status + ' · 最近回合 ' + g.lastTurnText + admin);
+      if ((g.jobs || []).length > 0) lines.push('    定时任务：' + g.jobs.map((j) => j.id + (j.enabled ? '' : '（停用）')).join('、'));
+    }
+    lines.push('');
+    lines.push('实时计数：表情统计 ' + r.counters.reactionMessages + ' 条消息 · 运营计数 ' + r.counters.opsEntries + ' 项 · 待确认批量踢 ' + r.counters.pendingKickBatches + ' · 正在输入会话 ' + r.counters.typingActive);
+    lines.push(r.note);
+    out.textContent = lines.join('\n');
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '';
+    out.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function loadScenarios() {
+  const pick = document.getElementById('scenPick');
+  try {
+    const r = await api('/api/scenarios');
+    if (r.ok !== true) { document.getElementById('scenNote').textContent = '⚠️ ' + (r.reason || '场景清单不可用'); return; }
+    pick.innerHTML = r.scenarios.map((s) => `<option value="${s.id}">${s.name}</option>`).join('');
+    const show = () => {
+      const hit = r.scenarios.find((s) => s.id === pick.value);
+      document.getElementById('scenNote').textContent = hit ? '验证：' + hit.note : '';
+      document.getElementById('scenGroup').style.display = (hit?.needs || []).includes('groupId') ? '' : 'none';
+      document.getElementById('scenUser').style.display = (hit?.needs || []).includes('userId') ? '' : 'none';
+    };
+    pick.onchange = show;
+    show();
+  } catch (error) {
+    document.getElementById('scenNote').textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function runScenario() {
+  const state = document.getElementById('scenNote');
+  const payload = {
+    scenario: document.getElementById('scenPick').value,
+    params: {
+      groupId: Number(document.getElementById('scenGroup').value) || 0,
+      userId: Number(document.getElementById('scenUser').value) || 0,
+      target: Number(document.getElementById('scenTarget').value) || 0,
+    },
+  };
+  state.textContent = '注入中…';
+  try {
+    const r = await api('/api/inject', { method: 'POST', body: JSON.stringify(payload) });
+    state.textContent = r.ok ? '✅ 已入队：' + (r.preview || '') + '（' + (r.reason || '') + '）' : '⚠️ ' + (r.reason || '注入失败');
+    loadInbox(false);
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function replayDiff() {
+  const out = document.getElementById('diffOut');
+  const state = document.getElementById('diffState');
+  let variant = null;
+  try {
+    variant = JSON.parse(document.getElementById('diffVariant').value || '{}');
+  } catch (error) {
+    state.textContent = '⚠️ 配置覆盖不是合法 JSON：' + error.message;
+    return;
+  }
+  state.textContent = '跑两次回放…';
+  try {
+    const r = await api('/api/replay-diff', { method: 'POST', body: JSON.stringify({ limit: 5, variant }) });
+    if (r.ok !== true) { state.textContent = ''; out.textContent = '⚠️ ' + (r.reason || '对比失败'); return; }
+    const lines = [r.summary, ''];
+    for (const row of r.rows.filter((x) => x.changed || x.changeKind === 'unknown').slice(0, 10)) {
+      lines.push('#' + row.index + ' [' + row.changeKind + '] ' + (row.text || '(无文本)'));
+      lines.push('    基线：' + (row.baseline.replied ? '会回复' : '静默') + (row.baseline.reason ? '（' + row.baseline.reason + '）' : '') + (row.baseline.reply ? ' → ' + row.baseline.reply : ''));
+      lines.push('    覆盖：' + (row.variant.replied ? '会回复' : '静默') + (row.variant.reason ? '（' + row.variant.reason + '）' : '') + (row.variant.reply ? ' → ' + row.variant.reply : ''));
+    }
+    if (r.changed === 0) lines.push('（没有差异：这批消息在两种配置下行为一致）');
+    out.textContent = lines.join('\n');
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '';
+    out.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function loadQr() {
+  const img = document.getElementById('qrImg');
+  const hint = document.getElementById('qrHint');
+  const state = document.getElementById('qrState');
+  state.textContent = '读取中…';
+  try {
+    const r = await api('/api/qr');
+    if (r.ok !== true) { state.textContent = ''; hint.textContent = '⚠️ ' + (r.reason || '二维码不可用'); return; }
+    if (r.dataUrl) { img.src = r.dataUrl; img.style.display = ''; } else { img.style.display = 'none'; }
+    const ago = r.exists ? (r.ageSeconds >= 60 ? Math.round(r.ageSeconds / 60) + ' 分钟前' : r.ageSeconds + ' 秒前') : '—';
+    state.textContent = r.exists ? (r.fresh ? '✅ 新鲜（' + ago + '）' : '⚠️ 已过期（' + ago + '）') : '⚠️ 还没有二维码';
+    hint.textContent = r.hint || '';
+  } catch (error) {
+    state.textContent = '';
+    hint.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function searchArchive() {
+  const q = document.getElementById('archQ').value.trim();
+  const days = Number(document.getElementById('archDays').value) || 7;
+  const chat = document.getElementById('archChat').value.trim();
+  const out = document.getElementById('archOut');
+  const state = document.getElementById('archState');
+  if (!q) { state.textContent = '⚠️ 请先填关键词'; return; }
+  state.textContent = '检索中…';
+  try {
+    const r = await api('/api/archive?q=' + encodeURIComponent(q) + '&days=' + days + '&chatKey=' + encodeURIComponent(chat));
+    if (!r.ok) { state.textContent = ''; out.textContent = '⚠️ ' + (r.reason || '检索失败'); return; }
+    const hits = r.hits || [];
+    if (hits.length === 0) {
+      out.textContent = '最近 ' + r.days + ' 天没找到「' + r.query + '」（已扫 ' + (r.scanned || 0) + ' 条）';
+    } else {
+      out.textContent = '命中 ' + hits.length + ' 条' + (r.truncated ? '（已按上限截断）' : '') + '，共扫 ' + (r.scanned || 0) + ' 条：\n'
+        + hits.map((h) => new Date(h.ts).toLocaleString('zh-CN', { hour12: false }) + '  ' + (h.name || h.userId) + '  [' + h.chatKey + ']  ' + h.text).join('\n');
+    }
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '';
+    out.textContent = '⚠️ ' + error.message;
+  }
+}
+
+// 静态模式（stream=0）只做一次性加载，不建立长连接也不再轮询：
+// 弱网/远程查看更省流量，也让自动化截图能拿到完整渲染结果。
+refresh();
+loadHistory().then(() => startStream());
+loadLog(true);
+loadInbox(true);
+loadScenarios();
+loadQr();
+loadArchive();
+loadPerf();
+loadJobs();
+loadGroups();
+runDiagnose();
+loadAcceptance();
+if (streamMode !== 'off') {
+  setInterval(refresh, 4000);
+  setInterval(() => loadLog(false), 3000);
+  setInterval(runDiagnose, 30000);
+  setInterval(loadAcceptance, 30000);
+  setInterval(() => { if (!document.hidden) loadInbox(false); }, 15000);
+  // 定时任务/群配置变化慢，自动刷新频率低一些（也不在页面不可见时空转）
+  setInterval(() => { if (!document.hidden) loadJobs(); }, 20000);
+  setInterval(() => { if (!document.hidden) loadGroups(); }, 30000);
+}
+</script>
+</body>
+</html>
