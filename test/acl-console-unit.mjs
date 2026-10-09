@@ -25,12 +25,14 @@ store.seedBuiltinRoles()
 store.importAssignmentsFromConfig({ identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest' }, adminUsers: [1002] })
 store.close()
 
-const corporaRoot = join(root, 'corpora')
+const corporaRoot = join(root, 'config', 'corpora')
 mkdirSync(join(corporaRoot, 'lore'), { recursive: true })
 writeFileSync(join(corporaRoot, 'lore', '01.md'), '世界观第一条')
+// 共享只读区（资源 dir:shared 的 uri 指向这里）
+mkdirSync(join(root, 'subjects', 'shared'), { recursive: true })
 
 const token = createAclToken()
-const ui = await startAclConsole({ file: dbFile, token, ui: '<!doctype html><title>ACL</title>', corporaRoot })
+const ui = await startAclConsole({ file: dbFile, token, ui: '<!doctype html><title>ACL</title>', dataRoot: root })
 const base = `http://127.0.0.1:${ui.port}`
 
 const get = (path, headers = {}) => fetch(`${base}${path}`, { headers })
@@ -112,6 +114,23 @@ check('快照带 resources/corpora/corpusBindings/sessions',
   Boolean(snap2.resources?.['dir:shared'] && snap2.corpora?.lore && snap2.corpusBindings?.['group:2001'] && Array.isArray(snap2.sessions)),
   JSON.stringify({ r: Object.keys(snap2.resources ?? {}), c: Object.keys(snap2.corpora ?? {}) }))
 check('快照里的资源授权可读回', (snap2.resources['dir:shared'].grants.guest ?? []).join(',') === 'read')
+check('资源带上判定点（dir:shared → tool.fs.read:shared）',
+  snap2.resources['dir:shared'].wired === 'tool.fs.read:shared', String(snap2.resources['dir:shared'].wired))
+check('资源的 uri 解析成绝对路径并判断存在（相对数据根）',
+  snap2.resources['dir:shared'].path === join(root, 'subjects', 'shared') && snap2.resources['dir:shared'].exists === true,
+  JSON.stringify({ path: snap2.resources['dir:shared'].path, exists: snap2.resources['dir:shared'].exists }))
+// guest 在前面被改过权限（只剩三条），admin 才是"确实有 tool.fs.read:shared"的角色
+await post({ action: 'resource-grants', role: 'admin', grants: [{ resourceId: 'dir:shared', actions: ['read'] }] })
+const snap2b = await (await get(`/api/acl?token=${token}`)).json()
+check('资源授权里列出真正有该判定点的角色（admin 有 tool.fs.read:shared，guest 被改过所以不算）',
+  (snap2b.resources['dir:shared'].grantedRoles ?? []).includes('admin')
+  && !(snap2b.resources['dir:shared'].grantedRoles ?? []).includes('guest'),
+  JSON.stringify(snap2b.resources['dir:shared'].grantedRoles))
+const unknownRes = await post({ action: 'resource-upsert', id: 'dir:whatever', kind: 'dir', uri: 'no/such/dir' })
+const snap3 = await (await get(`/api/acl?token=${token}`)).json()
+check('没接线的资源标成"仅登记"，且路径不存在如实显示',
+  snap3.resources['dir:whatever'].wired === '' && snap3.resources['dir:whatever'].exists === false,
+  JSON.stringify({ wired: snap3.resources['dir:whatever'].wired, exists: snap3.resources['dir:whatever'].exists }))
 
 const preview = await (await get(`/api/acl/corpus-preview?token=${token}&subject=group:2001`)).json()
 check('语料预览接口能解析文件', preview.items?.length === 1 && preview.text.includes('世界观第一条'), JSON.stringify(preview.items))

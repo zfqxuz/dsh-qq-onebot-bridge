@@ -36,8 +36,7 @@ state.port = port
 mkdirSync(dirname(stateFile), { recursive: true })
 writeFileSync(stateFile, JSON.stringify(state, null, 2))
 
-const corporaRoot = join(dataRoot, 'config', 'corpora')
-const console_ = await startAclConsole({ file: dbFile, token: state.token, port, corporaRoot })
+const console_ = await startAclConsole({ file: dbFile, token: state.token, port, dataRoot })
 console.log('权限控制台已启动：')
 console.log(`  ${console_.url}`)
 console.log(`  库文件：${dbFile}`)

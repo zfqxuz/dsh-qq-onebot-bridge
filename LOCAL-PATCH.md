@@ -964,3 +964,40 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
 
 **测试**：新增 `test/corpus-unit.mjs`（15 项）、`test/acl-store-unit.mjs` +13 项（v2 表、写前备份、
 会话快照去重）、`test/acl-console-unit.mjs` +12 项（新接口与预览）。19 个测试文件全绿。
+
+### 追加：共享只读区真的通了 + 资源页不再是装饰（2026-10-10 00:3x）
+
+上一轮结束时说的缺口：`tool.fs.read:shared` 这个权限点授予了，但受限读插件只有一个根
+（主体自己的目录），所以共享只读区**实际读不到** —— 声明了没接。这轮补上。
+
+**1. 插件 `dsh-tool-fs-jailed` 支持多根（另一个仓库，提交 bc0001a）**
+
+- 新增 `config.extraRoots = [{ prefix, root }]`，额外根用**显式前缀**寻址：`shared/群规.md`。
+  为什么不把两个根拍平成一个：相对路径会静默改投（`群规.md` 到底读哪个根？），前缀是唯一不含糊的写法。
+- 带前缀的路径**不允许**改投别的根（`shared/../outside` 直接拒），traversal（glob/grep 的 walk）
+  也按对应根做边界校验；共享区目录不存在时只警告，主根照常可用。
+- 工具描述里写清有哪几个根、前缀怎么用；错误信息仍然不回显绝对路径。
+- 测试 18 → 30 项。
+
+**2. 桥接侧接线**
+
+- `lib/tool-grants.js` 的 `resolveToolSurface()` 多算一个 `sharedRead`
+  （单独判 `tool.fs.read:shared`，不能拿 `tool.fs.read:*` 的结果顶替）。
+- `#registerJailedFsTools()` 在该权限为真时挂上共享根；顺带改了 `#sharedRoot()`：
+  共享区的实际路径**优先取资源 `dir:shared` 的 uri**（相对数据根），没有这条资源才用默认
+  `<dataRoot>/subjects/shared` —— 这样控制台改 uri 是真的改到挂载点，而不是只改一行展示数据。
+- 只读访客的提示词里补一句"共享只读区用 shared/ 前缀寻址"，免得模型去猜绝对路径。
+- debug 日志那行现在会写 `+ shared/<路径>` 或"（无共享只读区权限）"。
+
+**3. 控制台「资源与范围」页不再是装饰**
+
+- 每条资源多两列：**判定点**（`dir:shared → tool.fs.read:shared`、`svc:ecs → tool.mcp.ecs` …；
+  没接线的明确标"仅登记"）和**路径是否存在**（dir 类资源按数据根解析 uri 后判）。
+- 资源授权列出的角色会先跟判定点核对：只有**真持有该权限点**的角色才算数。
+- 资源表仍**不是**授权来源（授权永远在权限点里），页面的职责是"让你看得出接没接上"。
+
+**测试**：`test-jail.mjs` 30 项、`test/tool-surface-unit.mjs` 32 → 37 项
+（新增 sharedRead 的三态 + 共享目录真的被建出来 + 工具描述里出现 shared/）、
+`test/acl-console-unit.mjs` 39 → 43 项。已知与本次无关的红：`retention-unit` 的
+"移入回收站的是今天的日期桶"在本地时间跨过 0 点后必红（测试用 UTC 日期、代码用本地日期），
+改动前后一致。

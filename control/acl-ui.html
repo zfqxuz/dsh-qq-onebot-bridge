@@ -256,11 +256,19 @@ function renderCaps() {
 function renderResources() {
   const resources = Object.values(data.resources || {})
   const table = resources.length
-    ? '<table><tr><th>资源</th><th>类型</th><th>uri</th><th>各角色授权</th><th></th></tr>'
-      + resources.map((r) => `<tr><td><code>${escapeHtml(r.id)}</code><div class="muted">${escapeHtml(r.label || '')}</div></td>`
-        + `<td>${escapeHtml(r.kind || '')}</td><td><code>${escapeHtml(r.uri || '')}</code></td>`
-        + `<td>${Object.entries(r.grants || {}).map(([role, acts]) => `<span class="badge">${escapeHtml(role)}: ${escapeHtml((acts || []).join('/')) || '—'}</span>`).join(' ') || '<span class="muted">未授权</span>'}</td>`
-        + `<td><button class="act danger" data-delres="${escapeHtml(r.id)}">删</button></td></tr>`).join('') + '</table>'
+    ? '<table><tr><th>资源</th><th>类型</th><th>uri</th><th>判定点</th><th>各角色授权</th><th></th></tr>'
+      + resources.map((r) => {
+        const wired = r.wired
+          ? `<span class="badge">${escapeHtml(r.wired)}</span><div class="muted">${escapeHtml(r.wiredNote || '')}</div>`
+          : '<span class="badge no">仅登记</span><div class="muted">没有对应的判定点</div>'
+        const pathState = r.exists === null || r.exists === undefined ? ''
+          : (r.exists ? '<span class="badge">路径存在</span>' : '<span class="badge no">路径不存在</span>')
+        return `<tr><td><code>${escapeHtml(r.id)}</code><div class="muted">${escapeHtml(r.label || '')}</div></td>`
+          + `<td>${escapeHtml(r.kind || '')}</td><td><code>${escapeHtml(r.uri || '')}</code>${pathState ? '<div>' + pathState + '</div>' : ''}</td>`
+          + `<td>${wired}</td>`
+          + `<td>${Object.entries(r.grants || {}).map(([role, acts]) => `<span class="badge">${escapeHtml(role)}: ${escapeHtml((acts || []).join('/')) || '—'}</span>`).join(' ') || '<span class="muted">未授权</span>'}</td>`
+          + `<td><button class="act danger" data-delres="${escapeHtml(r.id)}">删</button></td></tr>`
+      }).join('') + '</table>'
     : '<p class="muted">还没有资源。先建一条（例如 kind=dir、uri=subjects/shared）。</p>'
   document.querySelectorAll('[data-delres]').forEach((btn) => btn.onclick = async () => {
     if (!confirm('删除资源 ' + btn.dataset.delres + '？')) return

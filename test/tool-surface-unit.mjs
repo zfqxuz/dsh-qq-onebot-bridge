@@ -10,7 +10,7 @@
  *   4. deny 覆盖与多身份取并集对工具面同样生效。
  */
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Config } from '../lib/index.js'
@@ -55,6 +55,10 @@ const guestSurface = resolveToolSurface(policy, `group:${GROUP}`)
 check('访客：需要裁剪', guestSurface.needRestrict === true)
 check('访客：不需要完整 preset（没有 shell / 写权限）', guestSurface.requiresFullPreset === false)
 check('访客：只读（readonly=true）', guestSurface.readonly === true)
+check('访客：有共享只读区读权限（sharedRead=true）', guestSurface.sharedRead === true, String(guestSurface.sharedRead))
+check('超管：sharedRead=true', adminSurface.sharedRead === true, String(adminSurface.sharedRead))
+const noShared = resolveToolSurface({ ...policy, subjectDenies: { [`group:${GROUP}`]: ['tool.fs.read:shared'] } }, `group:${GROUP}`)
+check('deny 掉 tool.fs.read:shared → sharedRead=false（共享区不挂）', noShared.sharedRead === false, String(noShared.sharedRead))
 check('访客：**没有** shell 工具', !guestSurface.inheritedTools.includes('bash'))
 check('访客：**没有**写文件工具', !guestSurface.inheritedTools.includes('write') && !guestSurface.inheritedTools.includes('edit'))
 check('访客：**没有** ECS / n8n / GH 运维工具',
@@ -109,12 +113,12 @@ function makeCtx() {
   const build = async (sessionId, options) => {
     const record = {
       sessionId: String(sessionId), meta: options.meta ?? {},
-      restrict: [], guards: [], tools: [], followups: [],
+      restrict: [], guards: [], tools: [], toolDefs: [], followups: [],
     }
     const agentCtx = {
       systemPrompt: { section: () => {} },
       tools: {
-        register: (tool) => record.tools.push(tool?.name ?? '(anon)'),
+        register: (tool) => { record.tools.push(tool?.name ?? '(anon)'); record.toolDefs.push(tool) },
         restrict: (spec) => record.restrict.push(spec),
         guard: (fn) => record.guards.push(fn),
         get: () => undefined,
@@ -211,6 +215,10 @@ check('访客会话注册了受限读工具（read/glob/grep）',
   ['read', 'glob', 'grep'].every((n) => guestSession.tools.includes(n)), guestSession.tools.join(','))
 check('访客会话**没有**注册发图/发文件工具（只读角色）',
   !guestSession.tools.includes('qq_send_image') && !guestSession.tools.includes('qq_send_file'), guestSession.tools.join(','))
+const guestReadDef = guestSession.toolDefs.find((tool) => tool?.name === 'read')
+check('访客的受限读工具挂上了共享只读区（描述里出现 shared/ 前缀）',
+  String(guestReadDef?.description ?? '').includes('shared/'), String(guestReadDef?.description ?? '').slice(0, 80))
+check('共享只读区目录被真的建出来了', existsSync(join(root, 'data', 'subjects', 'shared')), join(root, 'data', 'subjects', 'shared'))
 check('访客会话注册了只读查询工具（成员/历史）',
   guestSession.tools.includes('qq_member_info') && guestSession.tools.includes('qq_recent_history'), guestSession.tools.join(','))
 

@@ -10,6 +10,7 @@
 import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import { openAclStore } from '../../lib/acl-store.js'
 import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
@@ -43,8 +44,28 @@ function readBody(req) {
   })
 }
 
+/**
+ * 资源 → 实际判定点的对应表。资源表本身**不是**授权来源（授权永远是权限点，单一事实源），
+ * 但页面上必须能看出"这条资源到底接没接到判定上"，否则就是一张装饰表。
+ * 没在这张表里的资源 = 仅登记（管理员自己看的清单）。
+ */
+const WIRED_RESOURCES = {
+  'dir:shared': { perm: 'tool.fs.read:shared', note: '受限读工具的共享只读区（uri 相对数据根；改这里就是改实际挂载点）' },
+  'svc:ecs': { perm: 'tool.mcp.ecs', note: 'ECS 运维工具' },
+  'svc:n8n': { perm: 'tool.mcp.n8n', note: 'n8n 工具' },
+  'svc:gh': { perm: 'tool.mcp.gh', note: 'GitHub Actions 工具' },
+}
+
+/** 资源 uri 解析成绝对路径（相对路径按数据根解析；没有数据根就按原样判 exists）。 */
+function resolveResourcePath(uri, dataRoot) {
+  const raw = String(uri ?? '').trim()
+  if (raw === '') return ''
+  if (isAbsolute(raw)) return raw
+  return dataRoot === '' ? raw : join(dataRoot, raw)
+}
+
 /** 角色/权限快照（控制台首屏就这一份数据）。 */
-export function aclSnapshot(store) {
+export function aclSnapshot(store, { dataRoot = '' } = {}) {
   const policy = store.loadPolicy()
   return {
     file: store.file,
@@ -55,7 +76,23 @@ export function aclSnapshot(store) {
     permissions: PERMISSIONS.map((item) => ({ id: item.id, domain: item.domain ?? String(item.id).split('.')[0], kind: item.kind, label: item.label, group: item.group })),
     capabilities: CAPABILITIES.map((item) => ({ id: item.id, kind: item.kind, group: item.group, label: item.label, need: item.need ?? [], gate: item.gate ?? null, entry: item.entry ?? '' })),
     limits: Object.fromEntries(Object.entries(LIMITS).map(([key, spec]) => [key, { direction: spec.direction, default: spec.default, label: spec.label }])),
-    resources: policy.resources ?? {},
+    // 资源带上"接没接到判定上"和"路径是否存在"，页面才不是一张装饰表
+    resources: Object.fromEntries(Object.entries(policy.resources ?? {}).map(([id, row]) => {
+      const wired = WIRED_RESOURCES[id] ?? null
+      const path = row.kind === 'dir' ? resolveResourcePath(row.uri, dataRoot) : ''
+      const grantedRoles = Object.entries(row.grants ?? {})
+        .filter(([roleId, actions]) => (actions ?? []).length > 0
+          && (wired === null || roleHasPermission(policy, roleId, wired.perm)))
+        .map(([roleId]) => roleId)
+      return [id, {
+        ...row,
+        wired: wired?.perm ?? '',
+        wiredNote: wired?.note ?? '',
+        path,
+        exists: path === '' ? null : existsSync(path),
+        grantedRoles,
+      }]
+    })),
     corpora: policy.corpora ?? {},
     corpusBindings: policy.corpusBindings ?? {},
     // 生效快照：哪些会话是按哪套权限面建的（只读展示，D-12：控制台不碰会话）
@@ -65,6 +102,12 @@ export function aclSnapshot(store) {
       before: safeJson(row.before_json), after: safeJson(row.after_json),
     })),
   }
+}
+
+/** 某个角色有没有某个权限点（按基础点比对，范围不限）。 */
+function roleHasPermission(policy, roleId, permissionId) {
+  const base = String(permissionId).split(':')[0]
+  return (policy?.roles?.[roleId]?.permissions ?? []).some((id) => String(id).split(':')[0] === base)
 }
 
 function safeJson(text) {
@@ -205,7 +248,9 @@ export function applyAclAction(store, body, { actor = 'console' } = {}) {
  * 起服务。`ui` 是页面 HTML 字符串；`store` 可注入（测试用临时库）。
  * 返回 { server, port, url, token, close() }。
  */
-export async function startAclConsole({ file, token = createAclToken(), ui = '', port = 0, host = '127.0.0.1', logger = console, corporaRoot = '' } = {}) {
+export async function startAclConsole({ file, token = createAclToken(), ui = '', port = 0, host = '127.0.0.1', logger = console, corporaRoot = '', dataRoot = '' } = {}) {
+  // 语料根：显式给就用，否则按数据根推（<dataRoot>/config/corpora）
+  const corpusRoot = corporaRoot !== '' ? corporaRoot : (dataRoot === '' ? '' : join(dataRoot, 'config', 'corpora'))
   const html = ui || (existsSync(new URL('../acl-ui.html', import.meta.url))
     ? readFileSync(new URL('../acl-ui.html', import.meta.url), 'utf8')
     : '<!doctype html><meta charset="utf-8"><h1>权限控制台</h1><p>缺少 control/acl-ui.html</p>')
@@ -228,12 +273,12 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
     const store = openAclStore(file, { create: false })
     try {
       if (req.method === 'GET' && url.pathname === '/api/acl') {
-        return json(res, 200, aclSnapshot(store))
+        return json(res, 200, aclSnapshot(store, { dataRoot }))
       }
       if (req.method === 'GET' && url.pathname === '/api/acl/corpus-preview') {
         const subject = String(url.searchParams.get('subject') ?? '').trim()
         if (!/^(user|group):\S+$/.test(subject)) return json(res, 400, { ok: false, error: '要带 subject=user:<QQ号> 或 group:<群号>' })
-        const detail = resolveCorpusDetailed({ policy: store.loadPolicy(), subjectId: subject, root: corporaRoot })
+        const detail = resolveCorpusDetailed({ policy: store.loadPolicy(), subjectId: subject, root: corpusRoot })
         return json(res, 200, {
           ok: true,
           subject,
