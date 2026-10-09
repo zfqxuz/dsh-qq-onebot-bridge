@@ -772,3 +772,16 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
 
 ### 回滚
 `cp lib/bridge.js.bak-atprefix-<时间戳> lib/bridge.js`，再重启宿主。
+
+### 追加：命令在前、@ 在后也认（2026-10-09 20:5x，真机 `/status @机器人`）
+
+- 现象：群里发 `/status @2267595782`（先打命令再 @ 机器人，很自然的顺序）——命令是整串相等匹配，
+  尾部留着 ` @2267595782` 就认不出，整条被当成聊天丢给模型。上一版只剥行首的 @，没管行内/行尾。
+- 改动（`lib/bridge.js`）：`#stripSelfMention()` 在剥完行首之后，追加
+  `#stripSelfMentionAnywhere()` —— 去掉正文里任意位置"机器人自己的 @"（`@QQ` 与 `@昵称(QQ)` 两种渲染，
+  外加已学到的机器人名），并收掉多余空格。**只动机器人自己的 @**，别人的 @（如 `/禁言 @某人` 的目标）保留。
+- 测试：`test/group-command-prefix-unit.mjs` 增至 11 项，新增「命令尾部 @机器人 仍认命令」「行尾自我 @ 被去掉」
+  「别人的 @ 原样保留」。（顺带修掉测试里的一个坑：私聊会话创建后 `built[last]` 不再是群会话记录，
+  改断言回复文本。）
+- 验证：11 个测试文件全绿（workspace 18 / session-ownership 44 / retention 12 / persona 19 /
+  group-role 16 / guards 12 / engage-bridge 90 / acceptance 75 / group-command-prefix 11 / acl 52 / paths 16）。

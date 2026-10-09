@@ -10,7 +10,8 @@
  *  - `@<别人QQ> /ws`（本条也 @ 了机器人）→ 仍然认命令（命令优先于 @ 语义）；
  *  - `@<别人QQ> 你好` → 原样，不误伤；
  *  - 私聊完全不受影响；
- *  - 没 @ 机器人的群消息 → 不剥（也就不会进模型，被门禁挡下）。
+ *  - 没 @ 机器人的群消息 → 不剥（也就不会进模型，被门禁挡下）；
+ *  - 命令在前、@ 在后（真机 `/status @机器人`）→ 行内自我 @ 也要剥掉，命令才认得出。
  */
 import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
@@ -175,6 +176,21 @@ check('私聊文本不受影响', lastFollowup() === '你好', JSON.stringify(la
 // ===== 6. 群聊没 @ 机器人：门禁挡下，不产生任何回复 =====
 const quiet = await send(`@${BOT} /ws`, { group: true, atMe: false, ats: [] })
 check('未 @ 机器人的群消息仍然静默', quiet === '', quiet.trim())
+
+// ===== 7. 群聊「命令在前、@在后」也要认（真机 2026-10-09：/status @机器人 没被当命令） =====
+const trailingStatus = await send(`/status @${BOT}`, { group: true, atMe: true, ats: [BOT] })
+check('命令后面跟 @机器人 也认（/status）', trailingStatus.includes('QQ 桥状态'), trailingStatus.trim())
+const trailingWs = await send(`/ws @${BOT}`, { group: true, atMe: true, ats: [BOT] })
+check('命令后面跟 @机器人 也认（/ws）',
+  trailingWs.includes('可切换的工作区') || trailingWs.includes('没读到工作区登记表'), trailingWs.trim())
+
+// ===== 8. 行内/行尾的自我 @ 去掉；别人的 @ 原样保留 =====
+// 断言用"回复文本"而不是 mock 的 followup 列表：第 6 节创建过私聊会话，
+// built[last] 已经不是群会话那条记录了（踩过一次，写在这里防复发）。
+const inline1 = await send(`继续 @${BOT}`, { group: true, atMe: true, ats: [BOT] })
+check('行尾的自我 @ 被去掉', inline1 === '（回复）继续', JSON.stringify(inline1))
+const inline2 = await send(`@${BOT} 你好 @${OTHER}`, { group: true, atMe: true, ats: [BOT, OTHER] })
+check('别人的 @ 原样保留（只有机器人自己的被剥）', inline2 === `（回复）你好 @${OTHER}`, JSON.stringify(inline2))
 
 bridge.stop()
 rmSync(root, { recursive: true, force: true })
