@@ -629,3 +629,72 @@ watchdog 活在宿主**外面**：宿主死了它没法用 OneBot 发消息（�
 - 大小上限：超限时先删最老的桶、上限内保留较新的；
 - **定时**：启动清理之后再造一个过期桶，靠周期那一轮清掉（不重启）。
 `npm run test:session` 全绿：workspace 18 / session-ownership 44 / retention 12。
+
+## 人格注入：从"裸 coding assistant"改回可配置人设（2026-10-09，用户报障"群里怎么这么凶"）
+
+### 现象
+群里（guest 只读角色）说话又长又端着、爱纠正人、甩工具名和路径，还会用 Markdown ——
+与工作区 `AGENTS.md` 明令的"群里说人话 / 不许 Markdown / 不确定别编造"完全相反。
+更严重的一次：它编了 15 条假"电棍语录"，被识破后自己认账。
+
+### 根因（两条同时成立，缺一不可）
+1. **preset 的 persona 写了 `complete: true`**
+   `@deepseek-ai/dsh-system-prompt` 的 `assemble()` 里，凡标了 complete 的 section 会成为
+   **唯一**生效的 system prompt：
+   ```js
+   sections: completeSection === void 0 ? transformed.sections : [completeSection],
+   ```
+   于是桥接自己注册的 `qq-onebot-bridge` 规则段（群里说人话、不许 Markdown、
+   不确定就搜/别编造、只读访客说明…）被**静默丢掉**；`includeRuntimeContext: false`
+   又把运行时上下文一并清空。
+2. **preset 没挂 `agent-instructions`**，且访客 cwd 向上找不到项目根
+   预设是自包含插件表：上游 `standard` 预设里有 `agent-instructions`，我们的 QQ 预设没有；
+   而它默认只认 `.git` 作项目根标记，访客 cwd 是 `/home/zfq/dshbot/qq-users/qqguest`，
+   向上没有 `.git` → 根回退成 cwd → `/home/zfq/dshbot/AGENTS.md` **永远加载不到**。
+
+实测证据：10 个 QQ 会话（owner + guest）的 `system/message` 都只有 46 字节，
+内容就是 `You are a helpful software engineer assistant.`，没有任何规则段 / 指令注入。
+
+### 改动
+**profile（`~/.dsh/profiles/web/cordis.patch.yml`，两个 preset + 本插件 config）**
+1. 两个 QQ preset 的 persona 去掉 `complete: true` 和 `includeRuntimeContext: false`，
+   底座身份改成中性的一句 `You are a helpful assistant.`（人设改由桥接注入）；
+2. 两个 preset 补挂 `agent-instructions`，并把项目根标记扩成 `['.git', 'AGENTS.md']`，
+   这样访客 cwd 也能向上命中 `/home/zfq/dshbot/AGENTS.md`（已用同规则脚本离线验证）；
+3. 本插件 config 新增 `persona` 块（见下）。
+
+**桥接（`lib/bridge.js`）**
+4. 新增 `#personaEnabled()` / `#personaConfig()` / `#personaFile()` / `#resolvePersona()` /
+   `#registerPersonaSection()`，在 `#installSession` 里按角色注册 `qq-persona` 段；
+5. 段的位置：紧跟 `DEPLOYMENT_PERSONA_PREFIX` 之后（`getSectionOrder(...) + 0.5`），
+   让"你是谁"和"你在这怎么说"连在一起；
+6. 段文本注册成**函数**：DSH 每次组装请求都会调它 → **改 persona 文件下一句话就生效**，
+   不用重启宿主、不用新建会话；读文件带 `mtimeMs + size` 缓存，既省 IO 又能识别同长改写；
+7. 任何一级读不到都逐级降级，最后兜底 `DEFAULT_QQ_PERSONA`，不让"人格"把会话搞崩。
+
+### 配置（profile 里本插件 config.persona）
+```yaml
+persona:
+  enabled: true                     # false = 完全不注入（一键回退到 preset 自带身份）
+  dir: /home/zfq/dshbot/qq/config/persona   # 人设文件目录（可选）
+  owner: 私聊人设（文件读不到时的兜底）      # 也可短句兜底
+  guest: 群聊人设
+  extra: 公共追加
+  chats:                            # 按会话覆盖（chatKey 形如 g:134993546 / u:2493922172）
+    "g:134993546": 本群专属人设
+```
+文件命名（放 `dir` 下，**文件优先于同名字段**）：
+`owner.md` / `guest.md` / `default.md` / `extra.md` / `chat-<chatKey>.md`（`:` 等字符折叠成 `_`）。
+解析优先级（具体 > 泛化）：
+`dir/chat-<key>.md` → `chats.<key>` → `dir/<role>.md` → `<role>` → `dir/default.md` → `default` → 内置；
+最后永远追加 `extra`（`dir/extra.md` → `extra`）。
+
+### 测试
+`test/persona-unit.mjs`（新增，19 项）：段注册与顺序、函数式文本（热更新）、文件优先于配置、
+按会话优先于按角色、`extra` 追加、无配置走内置兜底、目录不存在逐级降级、
+没有 `getSectionOrder` 时用兜底顺序、`enabled:false` 完全不注册（但规则段照旧注册）。
+`npm run test:session` 全绿：workspace 18 / session-ownership 44 / retention 12 / persona 19。
+
+### 怎么改人设
+直接编辑 `/home/zfq/dshbot/qq/config/persona/{owner,guest,extra}.md` —— 下一句话生效。
+临时给某个群单独设定：写 `dir/chat-g_<群号>.md`。要整体关掉：`persona.enabled: false`。
