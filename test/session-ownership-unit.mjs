@@ -571,5 +571,36 @@ check('guest 的 web 服务经 reflect 取到后真的注册了 web_search',
   guestToolNames.includes('web_search'), JSON.stringify(guestToolNames.slice(0, 8)))
 check('guest 也注册了 web_fetch', guestToolNames.includes('web_fetch'), JSON.stringify(guestToolNames.slice(0, 8)))
 
+// --- 11. 工作区查找回落：registry 只有 list()、没有 resolveByPath 时也要能登记 ---
+const wsrB = { appended: [] }
+const listOnlyRegistry = {
+  list() {
+    return [{
+      id: 'ws-y',
+      path: stateDir,
+      get sessionIds() { return [...wsrB.appended] },
+      async attachSession(id) { if (!wsrB.appended.includes(id)) wsrB.appended.push(id) },
+    }]
+  },
+}
+const w11 = makeCtx2({ workspaceRegistry: listOnlyRegistry })
+const server11 = new MockServer()
+const config11 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: false,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge11 = new QQBridge(w11.ctx, config11, server11, { info() {}, warn() {}, error() {} })
+bridge11.start()
+await new Promise((r) => setTimeout(r, 400))
+server11.emit('message', {
+  bot: server11.socket, userId: 1001, messageType: 'private', groupId: 0, text: '回落查找', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'l1', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 500))
+check('没有 resolveByPath 时用 list() 回落也能登记进工作区', wsrB.appended.includes(WS_SESSION), JSON.stringify(wsrB.appended))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

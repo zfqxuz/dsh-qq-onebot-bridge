@@ -503,3 +503,20 @@ Error: cannot get property "workspaceRegistry" without inject
 测试：`session-ownership-unit.mjs` 新增第 10 节 —— 注入 mock `web` 服务后，guest 会话
 **真的注册出 `web_search` / `web_fetch`**（旧代码这条会失败）。
 合计 **33 passed / 0 failed**（session-ownership）+ **18 / 0**（workspace）。
+
+### 追加：工作区查找加回落 + 每一步都留诊断（2026-10-09）
+第一次修复上线后，日志确实出现了 `workspaceRegistry resolved via ctx.reflect.get`（服务取到了），
+但工作区 `sessionIds` 仍是 3 条、**一条 attach/backfill 日志都没有** —— 说明在某个静默
+`return`/`continue` 处分叉了，而当时那几个分支不写日志，排查只能靠猜（很贵）。
+
+改法：
+1. `#findWorkspaceEntity(registry, path)`：两条路都试 ——
+   `resolveByPath(path)`（官方，内部 realpath 归一化）→ 失败则 `list()` 里按 `path` 精确匹配
+   （context-handoff 的 `resolveWorkspace` 也是这么兜的）。两条都失败时把**原因**写进日志。
+2. `#noteWorkspaceRegistryOnce` 升级为打印服务形状：
+   `resolveByPath=<?> list=<?> keys=[…] listCount=… paths=[…]`，一次重启就能定位。
+3. `#ensureWorkspaceMembership` / `#backfillWorkspaceMembership` 的每个提前返回点都带日志
+   （registry 不可用 / entity 找不到 / attachSession 缺失 / 项目目录读不到 / 目录为空）。
+
+测试：新增第 11 节 —— registry 只有 `list()`、没有 `resolveByPath` 时，登记依然成功。
+合计 **34 passed / 0 failed** + workspace **18 / 0**。
