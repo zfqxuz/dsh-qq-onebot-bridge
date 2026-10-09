@@ -354,3 +354,8 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 ### 已知边界
 - 对账只认 `header.parentSession`：桥接旧版"抢不到就新建"产生的历史 fork
   （如 muzu6cn9 -> muzv9i7c -> muzvkzan）没有该字段，连不回来，属预期。
+
+### 修正（同日，T3 实测发现）：注入摘要的 source kind
+`#onTransferRequested` 里注入 digest 原用 `source: { kind: 'plugin', plugin: 'context-handoff', form: 'recall' }`，
+实测接续会话开局就 `turn/end reason=error: format v4 message requires a producer-owned source kind`
+（生产者是桥接，不是 context-handoff 插件）。改成 `source: { kind: 'user' }`（与桥接其它注入一致）。
