@@ -18,7 +18,7 @@
   "scripts": {
     "control": "node control/bin/qq-control.mjs",
     "test": "node test/control-unit.mjs",
-    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs",
+    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs",
     "test:persona": "node test/persona-unit.mjs",
     "test:group-role": "node test/group-role-unit.mjs",
     "test:acl": "node test/acl-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-gates-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs",
