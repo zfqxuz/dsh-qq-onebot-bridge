@@ -9,7 +9,8 @@
  *  1. 白名单里的群号配 owner → 该群用 qq-coding preset、owner 的 cwd、danger-full-access；
  *  2. 没配的群仍然 guest（qq-readonly + 访客 cwd + 不加 permission preset）；
  *  3. 私聊角色映射不受影响（owner 仍是 owner、访客仍是访客）；
- *  4. fail-closed：角色名写错（admin/true/数字）一律按 guest，绝不意外提权；
+ *  4. fail-closed：认不出的角色名（true/数字/乱写）一律按 guest，绝不意外提权；
+ *     注意 admin/owner 现在是**合法**角色（D-11：admin = 唯一超管，owner 是它的历史别名），
  *  5. 群号写数字或字符串都能对上；
  *  6. 开发群里**不**施加 guest 限制（不调 tools.restrict），普通群照旧限制；
  *  7. 启动时打一条醒目的"开发群已启用"警告（可审计）。
@@ -171,12 +172,14 @@ async function send(server, { userId = 1002, messageType = 'group', groupId = DE
   bridge.start()
 
   await send(server, { groupId: DEV_GROUP })
-  check('角色名写成 admin → 按 guest（fail-closed）', built[0]?.meta?.agentPreset === 'qq-readonly', `preset=${built[0]?.meta?.agentPreset}`)
+  // [权限模型 2026-10-09] admin 现在是合法角色（唯一超管，owner 是它的别名）→ 该群拿到超管能力。
+  check('角色名写成 admin → 识别为超管角色（D-11）', built[0]?.meta?.agentPreset === 'qq-coding', `preset=${built[0]?.meta?.agentPreset}`)
   await send(server, { groupId: OTHER_GROUP })
   check('角色名写成 true → 按 guest（fail-closed）', built[1]?.meta?.agentPreset === 'qq-readonly', `preset=${built[1]?.meta?.agentPreset}`)
   await send(server, { groupId: 999999 })
   check('数字群号也能对上字符串键', built[2]?.meta?.agentPreset === 'qq-coding', `preset=${built[2]?.meta?.agentPreset}`)
-  check('fail-closed 的两个群没有多给权限（只有 999999 那次 owner 调用）', permissionCalls.length === 1, JSON.stringify(permissionCalls))
+  check('fail-closed 的那个群没有多给权限（只有 999999 / admin 两次授权调用）',
+    permissionCalls.length === 2, JSON.stringify(permissionCalls))
   bridge.stop()
 }
 

@@ -854,3 +854,28 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
 - 测试：`test/tool-surface-unit.mjs`（26 项）：超管全通且不裁剪、访客没有 bash/write/ECS/n8n/GH/
   session_read/context_handoff、有受限读与联网、没有媒体工具；deny 覆盖后联网被摘；多身份叠加后
   ECS 工具进白名单；会话真实装配（preset=qq-readonly、restrict 白名单、注册了哪些工具）。
+
+### 追加：ACL 落库（SQLite）+ 首次引导 + 命令行（2026-10-09 22:0x）
+
+数据层从"配置翻译"升级到"库为准"，但**没库就回落配置**，所以删库即回滚。
+
+- `lib/acl-store.js`（新增，node:sqlite，零依赖）：
+  - 表：meta / roles / permissions（镜像）/ role_permissions / role_denies / role_limits /
+    subjects / subject_roles / subject_denies / acl_audit；
+  - `loadPolicy()` 输出 PDP 直接能吃的策略；**库里的未知权限点一律忽略**（fail-closed）；
+  - 写入口：`setRolePermissions` / `setRoleDenies` / `setSubjectRoles` / `setSubjectDenies`，
+    每次写都进 `acl_audit`（谁、什么时候、改了什么、改前改后）；
+  - `createAclReader()`：有库用库（按 mtime + 5 秒缓存重载）、没库/库坏回落配置（并 warn）。
+- `lib/bridge.js`：`aclEnabled`（默认 true）、`aclDbFile`（默认数据根 `config/acl.db`）、
+  `aclBootstrap`（首次启动按当前配置建库 + 导入分配，幂等）。`#aclPolicy()` 现在走库优先。
+- `lib/index.js`：新增上面三个配置键。
+- `control/bin/qq-acl.mjs`（新增 CLI，控制台将来复用同一套 store）：
+  `init / import-config / show / export / assign / grant / revoke / deny / undeny / audit`，
+  权限点写错直接拒绝（列全量词表）。
+- 角色名归一化统一了一处真 bug：`admin` 现在等同 owner（D-11），
+  并且 groupRoles 归一化、`#logDevGroups`、`pickRole` 都改用同一个 `normalizeRoleId()` ——
+  否则会出现"挂了 qq-coding 的 preset 却没有 danger-full-access 权限 preset"这种半吊子组合。
+- 测试：`test/acl-store-unit.mjs`（26 项）：建库/内置角色/导入/写入+审计/未知权限点忽略/
+  导出/读取器回落与 mtime 重载/**端到端**（库里给基础角色补 shell → 该群会话真的挂上能跑 shell 的 preset）。
+- 生效顺序（重要）：库存在时**库说了算**，profile 里的 identity 只用于"库不存在时的兜底"和首次引导。
+  回滚：删 `qqbot/config/acl.db`（或 `aclEnabled: false`）即回到配置翻译。
