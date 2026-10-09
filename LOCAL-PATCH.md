@@ -785,3 +785,24 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
   改断言回复文本。）
 - 验证：11 个测试文件全绿（workspace 18 / session-ownership 44 / retention 12 / persona 19 /
   group-role 16 / guards 12 / engage-bridge 90 / acceptance 75 / group-command-prefix 11 / acl 52 / paths 16）。
+
+### 追加：主体隔离（每主体一个目录）+ 受限读插件路径修复（2026-10-09 21:0x）
+
+需求 D-2：guest 只能读自己范围内的东西，不能互相读。
+
+- **缺陷**：所有 guest 共用一个 `qq-users/qqguest`（profile 里显式配的 + 代码默认都是它），
+  而这个目录同时是"会话工作目录 + 受限读工具根 + 可发送文件根"——于是 guest A 能读 guest B、
+  群 A 能读群 B 的文件。
+- **改动**（`lib/bridge.js` + `lib/paths.js`）：
+  1. guest 的 cwd 按主体派生：`subjects/u<QQ>`（私聊）/ `subjects/g<群号>`（群聊），
+     开关 `identity.perSubjectDirs`（默认 true；false = 退回共享目录的旧行为）；
+  2. 显式配了 `identity.roles.guest.cwd` 又开着 perSubjectDirs 时，启动打一条 warn 说明它被忽略；
+  3. 群里仍是"一个群一条会话"，所以**同群成员之间不隔离**（D-3 既有取舍）。
+- **顺带修的坑**：`dsh-tool-fs-jailed`（guest 受限读工具）用相对路径 `../../plugins/...` 动态 import，
+  源码从 `dshbot/qq/qq-onebot-bridge` 搬到 `dev/dsh-qq-onebot-bridge` 之后**悄悄失效**——
+  表现是 guest 会话没有任何读工具，日志里只有一行 debug。现在按候选顺序找
+  （显式 config.jailedFsPluginFile → 仓库 plugins/ → dev/dsh-plugins/ → cwd/qq/plugins/），
+  找不到就**明确 warn** 并 fail-closed；插件本体已收编进 `dev/dsh-plugins/`（提交 64e32c2）。
+- **测试**：新增 `test/subject-isolation-unit.mjs`（16 项）：群 A/群 B/私聊三个不同目录、同群复用
+  不漂移、owner 不受影响、`perSubjectDirs:false` 回旧行为、插件候选路径与 fail-closed。
+  `persona-unit` / `group-role-unit` 显式关掉逐主体目录（它们测的是人格与角色，不是路径策略）。

@@ -97,6 +97,9 @@ function makeConfig(persona) {
     identity: {
       enabled: true,
       map: { 1001: 'owner' },
+      // 本文件测的是人格注入，不是主体目录策略：显式关掉逐主体目录，
+      // 让"访客目录 = 配置里的 guestDir"这条断言继续成立（隔离本身见 subject-isolation-unit.mjs）。
+      perSubjectDirs: false,
       defaultRole: 'guest',
       groupRole: 'guest',
       roles: {

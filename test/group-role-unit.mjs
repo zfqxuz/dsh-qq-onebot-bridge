@@ -101,6 +101,9 @@ function makeConfig(groupRoles) {
     identity: {
       enabled: true,
       map: { 1001: 'owner' },
+      // 这个文件只测"角色选择"，不看主体目录策略：显式关掉逐主体目录，
+      // 好让它继续断言 guestSpec.cwd（主体隔离本身在 test/subject-isolation-unit.mjs 里测）。
+      perSubjectDirs: false,
       defaultRole: 'guest',
       groupRole: 'guest',
       groupRoles,
