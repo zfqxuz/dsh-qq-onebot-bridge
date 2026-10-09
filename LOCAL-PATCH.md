@@ -735,3 +735,40 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
 私聊角色不受影响；`admin`/`true` 等非法值 fail-closed 到 guest；数字/字符串群号都能命中；
 启动告警包含群号。
 `npm run test:session` 全绿：workspace 18 / session-ownership 44 / retention 12 / persona 19 / group-role 16。
+
+## 群聊命令的「@机器人」前缀归一化（2026-10-09，用户报障"群里的 /ws 不生效"）
+
+### 现象
+群里 @机器人 之后发 `/ws`（`/help`、`/status` 同理），机器人不认命令，整条被当成聊天丢给模型；
+私聊发同样的命令一切正常。
+
+### 根因
+- 段格式解析（`lib/onebot.js` 的 `parseMessage` 数组分支）会把 at 段渲染进正文：
+  真机抓到的就是 `@2267595782 /ws`（昵称拿不到时是 `@QQ`，拿到时是 `@昵称(QQ)`）；
+- 桥接里所有斜杠命令都按行首锚定（`^[\/／]命令`），命令不在行首 → 认不出；
+- 已有的 v0.5.9 归一化（`#textMentionName`）只覆盖 `atMe !== true`（文本 @ 名字）那条路，
+  **真 at 段**这条路没人管 —— 所以群里 @机器人 打命令全军覆没。
+
+### 改动（`lib/bridge.js`，备份 `lib/bridge.js.bak-atprefix-<时间戳>`）
+1. 入站文本归一化那一段（`const text = message.text.trim()` 之前）补一个 `else if`：
+   群聊时 `message.text = this.#stripSelfMention(message, message.text)`；
+2. 新增 `#stripSelfMention()` / `#isSelfMentionTag()`：只在 **群聊 + `atMe === true`** 时动手，
+   只剥这两种行首 `@`：① 就是机器人自己（QQ 号 / `昵称(QQ)` / 已学到的机器人名）；
+   ② `@` 后面紧跟斜杠命令（命令优先于 @ 语义）。最多剥两层，防客户端重复渲染。
+   `@某人 你好` 这类普通聊天原样保留。
+
+### 行为
+- 私聊、非群聊、没 @ 机器人的群消息：完全不变；
+- 剥掉之后模型看到的正文不再带 `@2267595782 ` 这一截（顺手去噪）；
+- **要重启宿主才生效**：profile 的 `dsh-hmr` 配的是 `root: []`，插件代码不走热重载，
+  只有 profile 配置是 live reload。
+
+### 验证
+- `test/group-command-prefix-unit.mjs`（新增，7 项）：`@机器人 /ws` 被当命令、`@机器人 你好` 剥前缀、
+  `@别人 /ws` 仍认命令、`@别人 你好` 不误伤、私聊不受影响、未 @ 机器人的群消息仍然静默；
+- 回归：workspace 18 / guards 12 / group-role 16 / engage-bridge 90 / acceptance 75 全绿；
+- `commands-unit` 里 `MC 离线可用` 1 项失败：已用 `git worktree` 拉 HEAD 版本复现同样的失败，
+  与本次改动无关（本地 ping 127.0.0.1:1 的措辞断言）。
+
+### 回滚
+`cp lib/bridge.js.bak-atprefix-<时间戳> lib/bridge.js`，再重启宿主。
