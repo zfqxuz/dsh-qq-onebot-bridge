@@ -44,3 +44,8 @@ qq-trash/
 qq-history/
 qq-files/
 node_modules
+
+# vim/编辑器临时文件
+*.swp
+*.swo
+*~
