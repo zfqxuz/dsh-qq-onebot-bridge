@@ -218,6 +218,7 @@ function makeCtx2({ resumeError = null } = {}) {
   const base = makeCtx()
   const resumeCalls = []
   const createCalls = []
+  const createMetas = []
   // 允许测试直接派发自定义事件（迁移契约），并记录桥接广播出去的事件。
   const myHandlers = new Map()
   const emitted = []
@@ -237,7 +238,7 @@ function makeCtx2({ resumeError = null } = {}) {
   }
   const origCreate = base.ctx.agents.create
   base.ctx.agents = {
-    create: async (options) => { createCalls.push(String(options.sessionId)); return origCreate(options) },
+    create: async (options) => { createCalls.push(String(options.sessionId)); createMetas.push(options.meta ?? {}); return origCreate(options) },
     resume: async (options) => {
       resumeCalls.push(String(options.resumeSessionId))
       if (resumeError !== null) throw resumeError
@@ -261,7 +262,7 @@ function makeCtx2({ resumeError = null } = {}) {
     base.built.push(record)
     return { agent, dispose: async () => {} }
   }
-  return { ctx: base.ctx, built: base.built, resumeCalls, createCalls, emitted, emitCustom }
+  return { ctx: base.ctx, built: base.built, resumeCalls, createCalls, createMetas, emitted, emitCustom }
 }
 
 const sessionStoreFile = join(stateDir, 'qq-sessions.json')
@@ -342,6 +343,8 @@ check('广播了 claimed 与 committed',
   JSON.stringify(w4.emitted.map((e) => e[0])))
 check('新会话收到 recall 摘要', (w4.built.at(-1)?.followups ?? []).join('').includes('上一会话摘要'),
   JSON.stringify((w4.built.at(-1)?.followups ?? []).map((t) => t.slice(0, 24))))
+check('接续会话带 parentSession（对账链不断）', w4.createMetas.at(-1)?.parentSession === boundSessionId,
+  JSON.stringify(w4.createMetas.at(-1) ?? {}))
 check('QQ 收到交接提示', server4.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n').includes('交接'),
   server4.sent.length + ' 条')
 

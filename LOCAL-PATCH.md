@@ -359,3 +359,10 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 `#onTransferRequested` 里注入 digest 原用 `source: { kind: 'plugin', plugin: 'context-handoff', form: 'recall' }`，
 实测接续会话开局就 `turn/end reason=error: format v4 message requires a producer-owned source kind`
 （生产者是桥接，不是 context-handoff 插件）。改成 `source: { kind: 'user' }`（与桥接其它注入一致）。
+
+### 修正（同日，T3 实测发现）：接续会话缺 parentSession
+桥接认领后自建的接续会话没有写 `meta.parentSession`，于是：
+- 启动对账 `#reconcileSessions` 沿链找不到它（链是断的）；
+- 重启后没人能把它和原会话关联起来。
+修法：`#createSession(message, key, { cwd, parentSession })` 透传 meta，认领时传 `fromSessionId`。
+用例：session-ownership-unit「接续会话带 parentSession（对账链不断）」。
