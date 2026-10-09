@@ -806,3 +806,24 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
 - **测试**：新增 `test/subject-isolation-unit.mjs`（16 项）：群 A/群 B/私聊三个不同目录、同群复用
   不漂移、owner 不受影响、`perSubjectDirs:false` 回旧行为、插件候选路径与 fail-closed。
   `persona-unit` / `group-role-unit` 显式关掉逐主体目录（它们测的是人格与角色，不是路径策略）。
+
+### 追加：门禁收编到统一判定点 #canRun（2026-10-09 21:2x，等价迁移）
+
+之前"谁能干什么"散在三处：`#isAdmin` 白名单（11 处）、`#roleOf().guest`（10 处）、`config.xxxEnabled`
+（240 个键）。现在命令/动作授权统一走 `#canRun(message, <能力 id>)`：
+
+- `lib/acl-policy.js`（新增）：把现有配置翻译成策略 —— `identity.map` 的 owner → **admin**
+  （owner 是 admin 的历史别名，D-11）、`adminUsers` 名单 → admin（D-5）、`groupRoles` → 群主体角色；
+  认不出的角色名按 guest（fail-closed）。`identity.enabled !== true` 时用内置 `legacy` 角色兜底：
+  **会话能力照旧全开（等于旧 owner），但命令授权不跟着放大**（旧代码在这种模式下命令侧仍是白名单）。
+- `lib/acl.js`：新增 `legacy` 内置角色 + `defaultRoleByKind`（人/群各自的默认角色）。
+- `lib/bridge.js`：新增 `#aclPolicy()`（5 秒缓存）、`#canRun()`（能力开关 + PDP）、
+  `#subjectOfSender()`（命令按发言人判，群里可以分人）、`#subjectOfChat()`（会话能力面按会话判）；
+  `#isAdmin()` 降级为 `#canRun('admin.config')` 的薄包装，语义 = "这个发言人有 admin 身份"。
+  已迁移的站点：`/ws`、`/handoff`、词库、日报、好友列表、播报、主动戳、敏感词豁免、
+  以及管理命令块（`/mute /kick /clear /公告 /精华 /名片 /头衔 /全员禁言 /退群` **逐个按自己的权限点**）。
+- 判定结果会写 debug 日志（`canRun deny <能力> subject=<主体> reason=... missing=... denied=...`），
+  排障不用猜。
+- 测试：`test/acl-gates-unit.mjs`（25 项）：策略翻译单元断言 + 真实命令的等价性
+  （超管 `/clear` 生效 / 访客落到模型、`/handoff` 与 `/ws` 的拒绝文案、群里踢人、deny 覆盖、
+  多身份取并集、identity 关闭时两条轴分开），并挂进 `npm run test:session`。
