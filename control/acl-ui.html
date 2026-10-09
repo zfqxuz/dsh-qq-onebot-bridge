@@ -208,17 +208,20 @@ function renderSubjectEditor() {
   if (!editingSubject) { $('subjectEditor').innerHTML = ''; return }
   const current = new Set(data.assignments[editingSubject] || [])
   const denies = (data.subjectDenies[editingSubject] || []).join(', ')
-  $('subjectEditor').innerHTML = `<div class="row"><b>${editingSubject}</b>`
+  const stored = (data.assignments[editingSubject] || [])
+  $('subjectEditor').innerHTML = `<div class="row"><b>${escapeHtml(editingSubject)}</b>`
     + Object.values(data.roles).map((r) => `<label><input type="checkbox" data-srole="${r.id}" ${current.has(r.id) ? 'checked' : ''}> ${r.id}</label>`).join('')
+    + `</div><div class="row"><span class="muted">库里当前保存的是：</span>`
+    + (stored.length ? stored.map((r) => `<span class="badge">${escapeHtml(r)}</span>`).join(' ') : '<span class="muted">没有分配（用默认角色）</span>')
     + `</div><div class="row"><input id="denyInput" size="60" value="${denies}" placeholder="deny 权限点，逗号分隔，例如 tool.shell, tool.mcp.ecs">`
     + `<button class="act primary" id="saveSubject">保存</button></div>`
   $('saveSubject').onclick = async () => {
     const roles = [...document.querySelectorAll('[data-srole]')].filter((el) => el.checked).map((el) => el.dataset.srole)
     const denyList = $('denyInput').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean)
     try {
-      await post({ action: 'subject-roles', subject: editingSubject, roles })
+      const saved = await post({ action: 'subject-roles', subject: editingSubject, roles })
       await post({ action: 'subject-denies', subject: editingSubject, denies: denyList })
-      msg('已保存 ' + editingSubject)
+      msg('已保存 ' + editingSubject + ' → ' + (saved.roles || []).join('+'))
       await load(); renderSubjectEditor()
     } catch (error) { msg(String(error.message), true) }
   }

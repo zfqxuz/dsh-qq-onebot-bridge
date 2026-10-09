@@ -11,7 +11,7 @@ import { createServer } from 'node:http'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
-import { openAclStore } from '../../lib/acl-store.js'
+import { canonicalRoleId, openAclStore } from '../../lib/acl-store.js'
 import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
@@ -142,7 +142,13 @@ export function applyAclAction(store, body, { actor = 'console' } = {}) {
     if (action === 'subject-roles') {
       const subject = String(body.subject ?? '').trim()
       if (!/^(user|group):\S+$/.test(subject)) return bad('主体写法应为 user:<QQ号> 或 group:<群号>')
-      return { ok: true, status: 200, payload: { ok: true, roles: store.setSubjectRoles(subject, list(body.roles), { actor }) } }
+      const policy = store.loadPolicy()
+      const known = new Set(Object.keys(policy.roles ?? {}))
+      const wanted = list(body.roles)
+      // 认不出的角色直接拒绝，而不是悄悄换算成 guest（那正是"勾了 gq 存成 guest"的来源）
+      const unknown = wanted.filter((id) => canonicalRoleId(id, known) === '')
+      if (unknown.length > 0) return bad(`角色不存在：${unknown.join(', ')}（可用：${[...known].join(', ')}）`)
+      return { ok: true, status: 200, payload: { ok: true, roles: store.setSubjectRoles(subject, wanted, { actor }) } }
     }
     if (action === 'subject-denies') {
       const subject = String(body.subject ?? '').trim()

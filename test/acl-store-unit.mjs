@@ -172,6 +172,24 @@ check('端到端：库里给了写权限 → 白名单里出现 write/edit',
 check('端到端：库里没给的 ECS 工具仍被挡', !(session?.restrict?.[0]?.allow ?? []).includes('ecs_exec'))
 bridge.stop()
 
+// ===== 自定义角色：挂到主体上必须原样保存（回归：曾被 normalizeRoleId 改写成 guest）=====
+const st3 = openAclStore(dbFile, { create: false })
+st3.db.prepare('INSERT OR REPLACE INTO roles(id, name, description, builtin, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)')
+  .run('gq', '群友', '自定义角色', Date.now(), Date.now())
+st3.setRolePermissions('gq', ['cmd.chat', 'cmd.image', 'tool.image.generate'], { actor: 'unit' })
+const assigned = st3.setSubjectRoles('group:134993546', ['gq'], { actor: 'unit' })
+check('自定义角色挂到主体上原样保存（不再被改写成 guest）', assigned.join(',') === 'gq', JSON.stringify(assigned))
+check('从库里读回来还是 gq', (st3.loadPolicy().assignments['group:134993546'] ?? []).join(',') === 'gq',
+  JSON.stringify(st3.loadPolicy().assignments['group:134993546']))
+check('owner 仍然按历史别名映射到 admin',
+  st3.setSubjectRoles('user:1001', ['owner'], { actor: 'unit' }).join(',') === 'admin')
+check('认不出的角色被丢掉（fail-closed，不会静默变 guest）',
+  st3.setSubjectRoles('user:1002', ['nope'], { actor: 'unit' }).length === 0)
+st3.setSubjectRoles('user:1003', ['admin', 'gq'], { actor: 'unit' })
+check('多身份（admin + 自定义角色）取并集保存',
+  st3.loadPolicy().assignments['user:1003'].sort().join(',') === 'admin,gq')
+st3.close()
+
 // ===== v2：资源 / 语料 / 会话快照 / 写前备份 =====
 const v2 = openAclStore(dbFile, { create: false })
 const res = v2.upsertResource({ id: 'dir:shared', kind: 'dir', uri: 'subjects/shared', label: '共享只读区' })

@@ -1001,3 +1001,21 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
 `test/acl-console-unit.mjs` 39 → 43 项。已知与本次无关的红：`retention-unit` 的
 "移入回收站的是今天的日期桶"在本地时间跨过 0 点后必红（测试用 UTC 日期、代码用本地日期），
 改动前后一致。
+
+### 修复：控制台给主体挂自定义角色会被改写成 guest（2026-10-10）
+
+- **现象**：控制台里给 `group:134993546` 勾 `gq`，保存后还是 guest。
+- **根因**：`acl-store.setSubjectRoles()` 把每个角色 id 都过了 `normalizeRoleId()` —— 那个函数
+  的语义是"把 **profile 配置**里的 owner/guest 翻译成角色"，认不出的一律给 guest。
+  于是自定义角色（gq）一保存就被改写成 guest。审计里是铁证：`set-subject-roles … ["guest"]`，
+  而界面勾的是 gq。
+- **修法**：
+  1. `canonicalRoleId(id, knownIds)`：**先认库里真实存在的角色**（自定义角色原样保留），
+     认不出才试历史别名（`owner` → `admin`），再认不出返回 ''（调用方丢掉，fail-closed）；
+  2. `setSubjectRoles()` 用它替换 `normalizeRoleId()`；
+  3. 控制台的 `subject-roles` 先校验角色存在，不存在的直接 400 并列出可用角色 ——
+     不再"悄悄换算成 guest"；
+  4. 控制台主体编辑页显示"库里当前保存的是：…"，保存后提示 `已保存 <主体> → <实际角色>`。
+- **测试**：acl-store-unit 39 → 44（自定义角色原样保存、owner 别名仍映射 admin、
+  认不出的角色被丢掉、多身份并集）；acl-console-unit 43 → 48（挂自定义角色 200 且回显 gq、
+  挂不存在的角色 400、被拒绝的写入不改库）。

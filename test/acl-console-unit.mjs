@@ -140,6 +140,21 @@ check('语料预览缺主体格式 → 400', previewBad.status === 400)
 const prune = await post({ action: 'session-prune', days: 30 })
 check('会话快照清理 → 200', prune.status === 200)
 
+// ===== 4c. 自定义角色的主体分配（回归：勾 gq 存成 guest）=====
+await post({ action: 'role-create', id: 'gq', name: '群友', cloneFrom: 'guest' })
+await post({ action: 'role-permissions', role: 'gq', permissions: ['cmd.chat', 'cmd.image', 'tool.image.generate'] })
+const assignCustom = await post({ action: 'subject-roles', subject: 'group:134993546', roles: ['gq'] })
+check('自定义角色能挂到主体上', assignCustom.status === 200)
+const assignBody = await assignCustom.clone().json()
+check('接口回显的就是 gq（不是 guest）', (assignBody.roles ?? []).join(',') === 'gq', JSON.stringify(assignBody))
+const snapCustom = await (await get(`/api/acl?token=${token}`)).json()
+check('库里存下来的也是 gq', (snapCustom.assignments['group:134993546'] ?? []).join(',') === 'gq',
+  JSON.stringify(snapCustom.assignments['group:134993546']))
+const assignUnknown = await post({ action: 'subject-roles', subject: 'group:134993546', roles: ['not-a-role'] })
+check('挂不存在的角色 → 400 而不是悄悄变 guest', assignUnknown.status === 400)
+const stillCustom = await (await get(`/api/acl?token=${token}`)).json()
+check('被拒绝的写入没有改动库', (stillCustom.assignments['group:134993546'] ?? []).join(',') === 'gq')
+
 // ===== 5. 导出 =====
 const exported = await (await get(`/api/acl/export?token=${token}`)).json()
 check('导出快照含 roles/assignments', Boolean(exported.roles && exported.assignments))
