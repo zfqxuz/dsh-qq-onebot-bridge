@@ -566,3 +566,33 @@ workspace lookup failed for /home/zfq/dshbot:
 
 测试第 12c 节：启动期挂起后，只发一个**会话事件**（模拟浏览器回合，不经 QQ 路径）→ 断言回填被触发。
 合计 **40 passed / 0 failed** + workspace **18 / 0**。
+
+## R12 告警：watchdog 事故流水 + 宿主启动补报到 QQ（阶段 4，2026-10-09）
+
+### 为什么这样做
+watchdog 活在宿主**外面**：宿主死了它没法用 OneBot 发消息（通道就在死掉的那个进程里）。
+所以它改为把事故**落盘**，宿主一回来再由桥接补报 —— 你不在电脑前也能知道期间掉过线。
+
+### watchdog 侧（ops/scripts/dsh-watchdog.sh）
+- 新增事故流水 `qq/logs/dsh-watchdog-incidents.jsonl`，四种事件：
+  `down`（首次探到掉线，带原因）/ `restart`（触发重启，带本小时第几次）/
+  `recovered`（恢复，带 `downtimeSeconds`）/ `rate-limited`（限流，需要人工介入）。
+- 可选 `WATCHDOG_WEBHOOK`：事故时 POST 同一份 JSON（`curl --max-time 8`，失败不影响主流程）。
+- 只在**状态跃迁**时记录，不是每次轮询都写（避免 15s 一条刷屏）。
+
+### 桥接侧（lib/bridge.js）
+- 新增 `#reportWatchdogIncidents()`：
+  - 读事故流水（末 300 行）+ 水位线 `qq/logs/dsh-watchdog-alert-state.json`；
+  - 只取 `at > notifiedAt` 的新事件；**先把水位线落盘**（宁可这条丢了，也不要每次启动重复轰炸）；
+  - 只有出现 `down`/`restart`/`rate-limited` 才播报（只有 recovered 不打扰）；
+  - 发到所有**非 guest 的绑定聊天**（`#bindingTargets()` + `#syntheticMessageForKey`），
+    文案含掉线次数 / 自动重启次数 / 最近停机秒数 / 限流警告；
+  - 落一条 `stage:'heal'` trace。
+- 触发点：`bot-connect`（socket 就绪后）与 `#startSessionMaintenance` 末尾。
+  两者都会先检查 socket，没上线就不置水位线，等上线再报。
+- 新配置：`watchdogAlertEnabled`（默认 true）/ `watchdogIncidentFile` / `watchdogAlertStateFile`。
+
+### 测试（session-ownership 第 13 节）
+- 事故流水（down+restart+recovered/23s）→ 断言 QQ 收到"掉线告警…23 秒后恢复"；
+- 水位线已写；**同一批事故再启动一次不重复播报**；增量事故（最新 1s）能补报。
+合计 **44 passed / 0 failed** + workspace **18 / 0**。

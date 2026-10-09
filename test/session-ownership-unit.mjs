@@ -708,5 +708,58 @@ w12c.emitSessionEvent(WS_SESSION, { type: 'turn/start', data: { turn: 1 } })
 await new Promise((r) => setTimeout(r, 600))
 check('12c 浏览器回合触发了延后回填', goodRef.appended.includes(WS_SESSION), JSON.stringify(goodRef.appended))
 
+// --- 13. R12 告警：watchdog 事故流水要在宿主启动后补报到 QQ，且只报一次 ---
+const incidentFile = join(stateDir, 'qq', 'logs', 'dsh-watchdog-incidents.jsonl')
+const alertStateFile = join(stateDir, 'qq', 'logs', 'dsh-watchdog-alert-state.json')
+mkdirSync(join(stateDir, 'qq', 'logs'), { recursive: true })
+rmSync(alertStateFile, { force: true })
+const now13 = Date.now()
+writeFileSync(incidentFile, [
+  JSON.stringify({ at: now13 - 60000, kind: 'down', detail: '宿主进程不在' }),
+  JSON.stringify({ at: now13 - 55000, kind: 'restart', detail: '确认掉线，触发重启', windowRestarts: 1 }),
+  JSON.stringify({ at: now13 - 30000, kind: 'recovered', detail: '已恢复', downtimeSeconds: 23 }),
+].join('\n') + '\n')
+
+function makeAlertBridge(server) {
+  const w = makeCtx2()
+  const config = Config({
+    cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+    sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+    preclaimSessions: false, reconcileSessions: false, notifyEnabled: false,
+    watchdogIncidentFile: incidentFile, watchdogAlertStateFile: alertStateFile,
+    identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+      roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+  })
+  const bridge = new QQBridge(w.ctx, config, server, { info() {}, warn() {}, error() {} })
+  bridge.start()
+  return bridge
+}
+const server13 = new MockServer()
+makeAlertBridge(server13)
+await new Promise((r) => setTimeout(r, 600))
+const alert13 = server13.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n')
+check('事故流水被补报到 QQ', alert13.includes('掉线告警') && alert13.includes('23 秒'), alert13.replace(/\n/g, ' | ').slice(0, 130))
+check('补报后写了水位线', existsSync(alertStateFile), '')
+
+// 幂等：同一批事故再来一次启动，不应重复播报
+const server13b = new MockServer()
+makeAlertBridge(server13b)
+await new Promise((r) => setTimeout(r, 600))
+check('同一批事故不会重复播报', server13b.sent.length === 0, JSON.stringify(server13b.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join(''))))
+
+// 只新增一条 recovered（无 down/restart/限流）时：不打扰
+const before13c = Date.now()
+writeFileSync(incidentFile, [
+  JSON.stringify({ at: before13c - 5000, kind: 'down', detail: 'x' }),
+  JSON.stringify({ at: before13c - 4000, kind: 'restart', detail: 'x' }),
+  JSON.stringify({ at: before13c - 2000, kind: 'recovered', detail: 'x', downtimeSeconds: 2 }),
+  JSON.stringify({ at: before13c - 1000, kind: 'recovered', detail: 'x', downtimeSeconds: 1 }),
+].join('\n') + '\n')
+const server13c = new MockServer()
+makeAlertBridge(server13c)
+await new Promise((r) => setTimeout(r, 600))
+const alert13c = server13c.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n')
+check('增量事故也能补报（含最新停机秒数）', alert13c.includes('1 秒'), alert13c.replace(/\n/g, ' | ').slice(0, 130))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
