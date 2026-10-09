@@ -306,3 +306,25 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 ### 尚未做（阶段 2 第二批）
 `context-handoff/requested` 的认领处理（消费者自建接续会话 + 事务化重绑 + 广播 committed + QQ 通知）、
 启动对账 `reconcileSessions`（沿 parentSession 跟随 handoff 子会话）、输出可见性埋点。
+
+## 会话迁移契约：桥接认领（阶段 2 第二批，2026-10-09）
+
+### 改动文件
+- `lib/bridge.js`（均带 `[本地补丁]` 标记）
+  1. `start()` 订阅 `context-handoff/requested`（受 `claimSessionTransfer` 开关控制）。
+  2. `#messageFromRoute(route)`：由 route 造最小 message，用于解析角色。
+  3. `#findChatForSession(sessionId)`：判断这个会话是不是本桥某个聊天绑定的
+     （先查 `this.agents`，再兜底扫 `qq-workspaces.json` / `qq-sessions.json`）。
+  4. `#onTransferRequested(payload)`：guest/群聊直接拒绝（D2 不迁移）；否则
+     emit `claimed` -> 用桥接自己的 `#createSession` 建接续会话（角色 preset/权限/cwd 都按本聊天重算，
+     `#createSession` 内部走 `#bindSession` 完成事务化重绑）-> 把 `digest` 作为 recall 消息注入
+     （`#handoff(next, null, ...)`，message 传 null 所以不按注入帧处理，接续回合的回复照常发回 QQ）
+     -> emit `committed` -> QQ 里回一句"上下文已交接到新会话"。失败则 emit `aborted`，交回插件决定。
+
+### 验证
+- `node test/session-ownership-unit.mjs`：12 passed / 0 failed
+  新增 5 项：认领后自建接续会话、绑定事务化切换、广播 claimed+committed、新会话收到 recall 摘要、QQ 收到交接提示
+- `node test/workspace-unit.mjs` 18 passed / 0 failed（无回归）
+
+### 尚未做
+启动对账 `reconcileSessions`（沿 header.parentSession 跟随 handoff 子会话）、非本桥会话的事件埋点。

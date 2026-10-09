@@ -217,6 +217,23 @@ function makeCtx2({ resumeError = null } = {}) {
   const base = makeCtx()
   const resumeCalls = []
   const createCalls = []
+  // 允许测试直接派发自定义事件（迁移契约），并记录桥接广播出去的事件。
+  const myHandlers = new Map()
+  const emitted = []
+  const origOn = base.ctx.on
+  base.ctx.on = (name, handler) => {
+    const list = myHandlers.get(name) ?? []
+    list.push(handler)
+    myHandlers.set(name, list)
+    return origOn(name, handler)
+  }
+  base.ctx.emit = (name, payload) => {
+    emitted.push([name, payload])
+    for (const handler of myHandlers.get(name) ?? []) handler(payload)
+  }
+  const emitCustom = (name, payload) => {
+    for (const handler of myHandlers.get(name) ?? []) handler(payload)
+  }
   const origCreate = base.ctx.agents.create
   base.ctx.agents = {
     create: async (options) => { createCalls.push(String(options.sessionId)); return origCreate(options) },
@@ -243,7 +260,7 @@ function makeCtx2({ resumeError = null } = {}) {
     base.built.push(record)
     return { agent, dispose: async () => {} }
   }
-  return { ctx: base.ctx, built: base.built, resumeCalls, createCalls }
+  return { ctx: base.ctx, built: base.built, resumeCalls, createCalls, emitted, emitCustom }
 }
 
 const sessionStoreFile = join(stateDir, 'qq-sessions.json')
@@ -298,6 +315,34 @@ bridge3.start()
 await new Promise((r) => setTimeout(r, 400))
 check('启动占位续接了绑定会话', w3.resumeCalls.includes(boundSessionId), `resumeCalls=${JSON.stringify(w3.resumeCalls)}`)
 check('启动占位不新建会话', w3.createCalls.length === 0, `createCalls=${JSON.stringify(w3.createCalls)}`)
+
+// --- 4. 迁移契约：桥接认领并自建接续会话 ---
+const w4 = makeCtx2()
+const server4 = new MockServer()
+const config4 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, claimSessionTransfer: true,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge4 = new QQBridge(w4.ctx, config4, server4, { info() {}, warn() {}, error() {} })
+bridge4.start()
+w4.emitCustom('context-handoff/requested', {
+  fromSessionId: boundSessionId, cwd: stateDir, reason: 'test',
+  digest: '【上一会话摘要】继续 T3 验收', availableRatio: 0.1, used: 900, contextWindow: 1000, deadlineMs: 2000,
+})
+await new Promise((r) => setTimeout(r, 600))
+const afterTransfer = readStored('u:1001')
+check('认领后由桥接自建了接续会话', w4.createCalls.length === 1, `createCalls=${JSON.stringify(w4.createCalls)}`)
+check('绑定事务化切到新会话', afterTransfer !== boundSessionId && afterTransfer === w4.createCalls[0], `after=${afterTransfer}`)
+check('广播了 claimed 与 committed',
+  w4.emitted.some((e) => e[0] === 'context-handoff/claimed') && w4.emitted.some((e) => e[0] === 'context-handoff/committed'),
+  JSON.stringify(w4.emitted.map((e) => e[0])))
+check('新会话收到 recall 摘要', (w4.built.at(-1)?.followups ?? []).join('').includes('上一会话摘要'),
+  JSON.stringify((w4.built.at(-1)?.followups ?? []).map((t) => t.slice(0, 24))))
+check('QQ 收到交接提示', server4.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n').includes('交接'),
+  server4.sent.length + ' 条')
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
