@@ -75,7 +75,7 @@
   <button class="btn" id="reload">刷新</button>
 </header>
 <nav id="tabs">
-  <button data-tab="matrix" class="on">角色与权限矩阵</button>
+  <button data-tab="matrix" class="on">角色与权限矩阵 <span class="dot" id="tabDotMatrix" hidden>●</span></button>
   <button data-tab="subjects">主体分配 <span class="dot" id="tabDotSub" hidden>●</span></button>
   <button data-tab="caps">能力视角</button>
   <button data-tab="resources">资源与限额 <span class="dot" id="tabDotRes" hidden>●</span></button>
@@ -197,7 +197,7 @@
   <section id="audit">
     <div class="card">
       <h3>生效快照（会话创建时固化的能力面）</h3>
-      <div class="row2"><span class="muted">改动只对**新建/重建**的会话生效；命令类（按发言人判定）不受影响。</span>
+      <div class="row2"><span class="muted">改动只对「新建 / 重建」的会话生效（会话创建时固化）；命令类按发言人逐条判定，不受影响。</span>
         <span class="spacer"></span><input id="sessionSearch" placeholder="过滤主体/会话" size="18">
         <button class="btn sm" id="pruneSessions">清理 30 天前的记录</button></div>
       <div id="sessionBox"></div>
@@ -275,7 +275,7 @@ function syncPanel(panel) {
   markDot(panel, dirty.has(panel))
 }
 function markDot(panel, on) {
-  const dot = { subjects: 'tabDotSub', grants: 'tabDotRes', limits: 'tabDotRes', corpbind: 'tabDotCorp' }[panel]
+  const dot = { matrix: 'tabDotMatrix', subjects: 'tabDotSub', grants: 'tabDotRes', limits: 'tabDotRes', corpbind: 'tabDotCorp' }[panel]
   if (dot) $(dot).hidden = !on
 }
 function touch(panel) {
@@ -466,7 +466,7 @@ function renderSubjectEditor() {
     + '<div class="row2 chips">' + Object.values(data.roles).map((r) =>
       '<label><input type="checkbox" data-panel="subjects" data-srole="' + esc(r.id) + '" ' + (current.has(r.id) ? 'checked' : '') + '><span>' + esc(r.id) + '</span></label>').join('') + '</div>'
     + '<div class="row2"><input class="grow" data-panel="subjects" id="denyInput" value="' + esc((data.subjectDenies[openedSubject] || []).join(', ')) + '" placeholder="deny 权限点，逗号分隔，例如 tool.shell, tool.mcp.ecs"></div>'
-    + '<div class="hint">命令类权限按**发言人**判定：要拦某人的命令，deny 要压在 <code>user:&lt;QQ&gt;</code> 上，压在群主体上不生效。</div>'
+    + '<div class="hint">命令类权限按「发言人」判定：要拦某人的命令，deny 要压在 <code>user:&lt;QQ&gt;</code> 上，压在群主体上不生效。</div>'
     + '</div>'
   syncPanel('subjects')
 }
