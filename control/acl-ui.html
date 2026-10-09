@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ 机器人权限控制台</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Noto Sans CJK SC", sans-serif; background: #14161a; color: #e6e6e6; }
+  header { padding: 12px 16px; background: #1c1f26; border-bottom: 1px solid #2a2f39; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header b { color: #7cc4ff; }
+  .muted { color: #8b93a1; }
+  nav { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #2a2f39; flex-wrap: wrap; }
+  nav button { background: #22262e; color: #cfd6e0; border: 1px solid #333a46; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+  nav button.on { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
+  main { padding: 16px; max-width: 1200px; }
+  section { display: none; }
+  section.on { display: block; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+  select, input, button.act { background: #1c1f26; color: #e6e6e6; border: 1px solid #333a46; border-radius: 6px; padding: 6px 8px; }
+  button.act { cursor: pointer; }
+  button.act.primary { background: #2b6cb0; border-color: #2b6cb0; }
+  button.act.danger { background: #7a2530; border-color: #7a2530; }
+  .grid { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px; align-items: center; }
+  .grid .domain { grid-column: 1 / -1; margin-top: 12px; color: #7cc4ff; font-weight: 600; border-top: 1px solid #2a2f39; padding-top: 8px; }
+  .grid .cell { padding: 2px 0; }
+  .grid .cell .id { color: #8b93a1; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { text-align: left; border-bottom: 1px solid #2a2f39; padding: 6px 8px; font-size: 13px; }
+  code { background: #1c1f26; padding: 1px 5px; border-radius: 4px; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 12px; background: #263041; color: #9fc7ff; }
+  .badge.no { background: #3a2229; color: #ffb3b3; }
+  #msg { min-height: 20px; color: #9ae6b4; }
+  #msg.err { color: #ffb3b3; }
+  details summary { cursor: pointer; color: #8b93a1; }
+</style>
+</head>
+<body>
+<header>
+  <b>QQ 机器人权限控制台</b>
+  <span class="muted" id="file"></span>
+  <span class="muted">token：</span><input id="token" size="18" placeholder="URL 里的 ?token=">
+  <button class="act" id="reload">刷新</button>
+  <span id="msg"></span>
+</header>
+<nav>
+  <button data-tab="matrix" class="on">角色与权限矩阵</button>
+  <button data-tab="subjects">主体分配</button>
+  <button data-tab="caps">能力视角</button>
+  <button data-tab="audit">审计</button>
+</nav>
+<main>
+  <section id="matrix" class="on">
+    <div class="row">
+      <label>角色</label><select id="roleSel"></select>
+      <button class="act" id="saveRolePerms">保存该角色权限</button>
+      <span class="muted">勾"允许"= 授予；勾"禁止"= deny（压过所有身份）</span>
+    </div>
+    <div class="row">
+      <input id="newRole" placeholder="新角色 id（小写字母/数字/_-）">
+      <input id="newRoleName" placeholder="显示名">
+      <select id="cloneFrom"><option value="">（不复制权限）</option></select>
+      <button class="act" id="createRole">新建角色</button>
+      <button class="act danger" id="deleteRole">删除当前角色</button>
+    </div>
+    <div class="grid" id="permGrid"></div>
+  </section>
+
+  <section id="subjects">
+    <div class="row">
+      <input id="subject" placeholder="user:2493922172 或 group:176628359">
+      <button class="act" id="addSubject">添加/编辑</button>
+      <span class="muted">一个主体可持有多个角色（权限取并集）；deny 用逗号分隔</span>
+    </div>
+    <div id="subjectEditor"></div>
+    <table id="subjectTable"></table>
+  </section>
+
+  <section id="caps">
+    <div class="row"><label>按角色：</label><select id="capRole"></select></div>
+    <table id="capTable"></table>
+  </section>
+
+  <section id="audit"><div id="auditBox"></div></section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id)
+let token = new URLSearchParams(location.search).get('token') || sessionStorage.getItem('aclToken') || ''
+$('token').value = token
+let data = null
+let selectedRole = ''
+let editingSubject = ''
+
+function msg(text, isErr = false) { const el = $('msg'); el.textContent = text; el.className = isErr ? 'err' : '' ; setTimeout(() => { if (el.textContent === text) el.textContent = '' }, 4000) }
+
+async function api(path, options) {
+  const url = path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
+  const res = await fetch(url, options)
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status))
+  return body
+}
+async function post(payload) { return api('/api/acl', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }) }
+
+async function load() {
+  token = $('token').value.trim() || token
+  sessionStorage.setItem('aclToken', token)
+  data = await api('/api/acl')
+  $('file').textContent = data.file
+  renderRoles(); renderMatrix(); renderSubjects(); renderCaps(); renderAudit()
+}
+
+function renderRoles() {
+  const roles = Object.values(data.roles)
+  $('roleSel').innerHTML = roles.map((r) => `<option value="${r.id}">${r.id}（${r.name || ''}）·权限 ${r.permissions.length}</option>`).join('')
+  $('cloneFrom').innerHTML = '<option value="">（不复制权限）</option>' + roles.map((r) => `<option value="${r.id}">${r.id}</option>`).join('')
+  $('capRole').innerHTML = roles.map((r) => `<option value="${r.id}">${r.id}</option>`).join('')
+  if (!roles.some((r) => r.id === selectedRole)) selectedRole = roles[0]?.id || ''
+  $('roleSel').value = selectedRole
+}
+
+function renderMatrix() {
+  const role = data.roles[selectedRole]
+  if (!role) { $('permGrid').innerHTML = '<p class="muted">没有角色</p>'; return }
+  const allow = new Set(role.permissions), deny = new Set(role.denies)
+  const groups = {}
+  for (const p of data.permissions) { (groups[p.group || '其它'] ??= []).push(p) }
+  let html = ''
+  for (const [group, perms] of Object.entries(groups)) {
+    html += `<div class="domain">${group}</div>`
+    for (const p of perms) {
+      html += `<div class="cell"><div>${p.label || p.id}</div><div class="id">${p.id}</div></div>`
+        + `<div><input type="checkbox" data-perm="${p.id}" data-kind="allow" ${allow.has(p.id) ? 'checked' : ''}></div>`
+        + `<div><input type="checkbox" data-perm="${p.id}" data-kind="deny" ${deny.has(p.id) ? 'checked' : ''}></div>`
+    }
+  }
+  $('permGrid').innerHTML = html
+}
+
+function renderSubjects() {
+  const rows = Object.keys(data.assignments).sort()
+  $('subjectTable').innerHTML = '<tr><th>主体</th><th>角色</th><th>deny</th></tr>' + (rows.length ? rows.map((s) =>
+    `<tr><td><code>${s}</code></td><td>${(data.assignments[s] || []).map((r) => `<span class="badge">${r}</span>`).join(' ')}</td>`
+    + `<td>${(data.subjectDenies[s] || []).map((p) => `<span class="badge no">${p}</span>`).join(' ') || '<span class="muted">—</span>'}</td></tr>`).join('')
+    : '<tr><td colspan="3" class="muted">还没有主体分配（库里的默认角色：人=' + data.defaultRoleByKind.user + ' 群=' + data.defaultRoleByKind.group + '）</td></tr>')
+}
+
+function renderSubjectEditor() {
+  if (!editingSubject) { $('subjectEditor').innerHTML = ''; return }
+  const current = new Set(data.assignments[editingSubject] || [])
+  const denies = (data.subjectDenies[editingSubject] || []).join(', ')
+  $('subjectEditor').innerHTML = `<div class="row"><b>${editingSubject}</b>`
+    + Object.values(data.roles).map((r) => `<label><input type="checkbox" data-srole="${r.id}" ${current.has(r.id) ? 'checked' : ''}> ${r.id}</label>`).join('')
+    + `</div><div class="row"><input id="denyInput" size="60" value="${denies}" placeholder="deny 权限点，逗号分隔，例如 tool.shell, tool.mcp.ecs">`
+    + `<button class="act primary" id="saveSubject">保存</button></div>`
+  $('saveSubject').onclick = async () => {
+    const roles = [...document.querySelectorAll('[data-srole]')].filter((el) => el.checked).map((el) => el.dataset.srole)
+    const denyList = $('denyInput').value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean)
+    try {
+      await post({ action: 'subject-roles', subject: editingSubject, roles })
+      await post({ action: 'subject-denies', subject: editingSubject, denies: denyList })
+      msg('已保存 ' + editingSubject)
+      await load(); renderSubjectEditor()
+    } catch (error) { msg(String(error.message), true) }
+  }
+}
+
+function canRun(roleId, cap) {
+  const role = data.roles[roleId]
+  if (!role) return false
+  const allow = new Set(role.permissions), deny = new Set(role.denies)
+  const match = (granted, need) => {
+    const g = granted.split(':'), n = need.split(':')
+    if (g[0] !== n[0] || granted.split(':')[0] !== need.split(':')[0]) return false
+    if (g[0] !== n[0]) return false
+    return true
+  }
+  const base = (id) => id.split(':')[0]
+  const allowed = (need) => [...allow].some((g) => base(g) === base(need))
+  const blocked = (need) => [...deny].some((d) => base(d) === base(need) || d === '*')
+  if ((cap.need || []).some((n) => !allowed(n) || blocked(n))) return false
+  if (cap.gate && cap.gate.kind === 'flag') return 'flag:' + cap.gate.key
+  return true
+}
+
+function renderCaps() {
+  const roleId = $('capRole').value || selectedRole
+  const rows = data.capabilities.map((cap) => {
+    const ok = canRun(roleId, cap)
+    return `<tr><td>${cap.label}<div class="id muted">${cap.need.join(', ') || '（无权限要求）'}</div></td>`
+      + `<td>${cap.kind}</td><td>${ok === false ? '<span class="badge no">不可用</span>' : ok === true ? '<span class="badge">可用</span>' : '<span class="badge">' + ok + '</span>'}</td></tr>`
+  }).join('')
+  $('capTable').innerHTML = `<tr><th>能力</th><th>类型</th><th>${roleId} 能不能用</th></tr>` + rows
+}
+
+function renderAudit() {
+  $('auditBox').innerHTML = '<table><tr><th>时间</th><th>谁</th><th>动作</th><th>目标</th><th>变化</th></tr>'
+    + data.audit.map((row) => {
+      const at = new Date(row.at).toLocaleString()
+      const diff = row.after === null && row.before === null ? '' : `<details><summary>看变化</summary><code>${escapeHtml(JSON.stringify({ before: row.before, after: row.after }))}</code></details>`
+      return `<tr><td>${at}</td><td>${row.actor}</td><td>${row.action}</td><td><code>${row.target}</code></td><td>${diff}</td></tr>`
+    }).join('') + '</table>'
+}
+function escapeHtml(text) { return String(text).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])) }
+
+document.querySelectorAll('nav button').forEach((btn) => btn.onclick = () => {
+  document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b === btn))
+  document.querySelectorAll('section').forEach((s) => s.classList.toggle('on', s.id === btn.dataset.tab))
+})
+$('reload').onclick = () => load().catch((e) => msg(String(e.message), true))
+$('roleSel').onchange = (e) => { selectedRole = e.target.value; renderMatrix() }
+$('capRole').onchange = () => renderCaps()
+$('saveRolePerms').onclick = async () => {
+  const allow = [], deny = []
+  document.querySelectorAll('[data-kind="allow"]').forEach((el) => { if (el.checked) allow.push(el.dataset.perm) })
+  document.querySelectorAll('[data-kind="deny"]').forEach((el) => { if (el.checked) deny.push(el.dataset.perm) })
+  try {
+    await post({ action: 'role-permissions', role: selectedRole, permissions: allow })
+    await post({ action: 'role-denies', role: selectedRole, denies: deny })
+    msg('已保存角色 ' + selectedRole)
+    await load()
+  } catch (error) { msg(String(error.message), true) }
+}
+$('createRole').onclick = async () => {
+  try {
+    await post({ action: 'role-create', id: $('newRole').value.trim(), name: $('newRoleName').value.trim(), cloneFrom: $('cloneFrom').value })
+    msg('已创建'); await load()
+  } catch (error) { msg(String(error.message), true) }
+}
+$('deleteRole').onclick = async () => {
+  if (!confirm('删除角色 ' + selectedRole + '？')) return
+  try { await post({ action: 'role-delete', id: selectedRole }); msg('已删除'); await load() } catch (error) { msg(String(error.message), true) }
+}
+$('addSubject').onclick = () => {
+  editingSubject = $('subject').value.trim()
+  if (!editingSubject) { msg('填个主体，例如 group:176628359', true); return }
+  renderSubjectEditor()
+}
+load().catch((e) => msg(String(e.message), true))
+</script>
+</body>
+</html>
