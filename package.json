@@ -18,13 +18,14 @@
   "scripts": {
     "control": "node control/bin/qq-control.mjs",
     "test": "node test/control-unit.mjs",
-    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs",
+    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs",
     "test:persona": "node test/persona-unit.mjs",
     "test:group-role": "node test/group-role-unit.mjs",
     "test:acl": "node test/acl-unit.mjs",
     "test:paths": "node test/paths-unit.mjs",
     "test:isolation": "node test/subject-isolation-unit.mjs",
-    "test:gates": "node test/acl-gates-unit.mjs"
+    "test:gates": "node test/acl-gates-unit.mjs",
+    "test:tools": "node test/tool-surface-unit.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

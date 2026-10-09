@@ -827,3 +827,30 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
 - 测试：`test/acl-gates-unit.mjs`（25 项）：策略翻译单元断言 + 真实命令的等价性
   （超管 `/clear` 生效 / 访客落到模型、`/handoff` 与 `/ws` 的拒绝文案、群里踢人、deny 覆盖、
   多身份取并集、identity 关闭时两条轴分开），并挂进 `npm run test:session`。
+
+### 追加：DSH 插件能力按权限管控（2026-10-09 21:4x，zfq 纠正后重做）
+
+zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联网搜索 / ECS·n8n·GH 运维 /
+会话读取 / 生图），不是 QQ 群管那点权限。上一轮只把 QQ 命令侧收编了，工具面还是写死的
+`role.guest` 分支 —— 这次补上。
+
+- `lib/tool-grants.js`（新增）：权限点 → 工具名的映射（单一事实源）。两类必须分别管：
+  - `tools[]` = 宿主级/继承工具 → 交给 `agentCtx.tools.restrict({ allow })` 白名单裁剪；
+  - `scoped` = 桥接自己注册的工具（受限读 / 联网 / qq_* / 生图）→ **没权限就不注册**
+    （restrict 管不着 scoped 注册，只挡宿主全局工具）。
+  带范围的权限点（`tool.fs.read:*`）判定时落到**本主体**（问的是"他范围内的读权限"）。
+- `lib/bridge.js`：
+  - `#toolSurface(route)` = 会话主体的工具面；`#presetForSurface()` **权限驱动选 preset**：
+    有 shell / 写文件权限才允许挂完整 preset —— `qq-coding` 的 bash 是 scoped 注册，
+    restrict 挡不住，"只读角色挂完整 preset"就等于给了 shell；
+  - `#applyToolSurface()` 落地：`needRestrict` 时才 `restrict({allow})`（全都要就不裁剪，
+    免得宿主以后新增的工具因为我们漏列而消失，管理员尤其不能）；scoped 工具按权限注册；
+  - `#toolSurfaceSelfCheck()`：**没授权的危险工具如果还看得见就报警**（假安全必须吵出来）；
+  - 旧 `#applyGuestRestrictions` 拆成 `#registerJailedFsTools` + 自检（restrict 统一走上面那条路）。
+- 行为变化（有意为之，符合"基础角色仅有读权限"）：只读角色**不再**注册
+  `qq_send_image / qq_send_file / qq_send_voice / qq_react / qq_face_*`（出站与表情属于写/动作能力），
+  只保留只读查询（`qq_member_info / qq_recent_history / qq_search_history`）+ 自己范围的
+  read/glob/grep + 联网搜索。
+- 测试：`test/tool-surface-unit.mjs`（26 项）：超管全通且不裁剪、访客没有 bash/write/ECS/n8n/GH/
+  session_read/context_handoff、有受限读与联网、没有媒体工具；deny 覆盖后联网被摘；多身份叠加后
+  ECS 工具进白名单；会话真实装配（preset=qq-readonly、restrict 白名单、注册了哪些工具）。
