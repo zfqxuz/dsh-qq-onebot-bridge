@@ -328,3 +328,29 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 
 ### 尚未做
 启动对账 `reconcileSessions`（沿 header.parentSession 跟随 handoff 子会话）、非本桥会话的事件埋点。
+
+## 启动对账 + 事件可见性（阶段 2 第三批，2026-10-09）
+
+### 改动文件（lib/bridge.js，均带 [本地补丁] 标记）
+1. `import zlib from 'node:zlib'`（默认导入，Node < 23 没有 zstd 时静默降级，不会 import 失败）。
+2. `#readHeaderAt(dir)`：只解会话日志的**首帧**（JSONL+zstd 逐帧拼接，按魔数 28 B5 2F FD 切帧），
+   取 header 的 `parentSession` / `agentPreset` 等元信息。
+3. `#reconcileSessions()`：扫描 `sessionRootDir` 下所有项目目录（上限 400 个会话目录），
+   构建 `parent -> [children]` 映射，从每个聊天已绑定的会话往下走最多 10 层（带环检测，
+   同级取 mtime 最新），跟到最新接续会话就 `#bindSession` 重绑。只读、绝不新建。
+   guest/群聊跳过（D2）。
+4. `#bindingTargets()`：把"聊天 -> 已绑定会话"的收集逻辑抽出来，`#reconcileSessions` 与
+   `#preclaimSessions` 共用（去掉重复实现）。
+5. `#startSessionMaintenance()`：启动时**先对账、再占位**（顺序重要：对账决定绑到哪条会话，
+   占位再去抢它的 writer）。`start()` 里 `void this.#startSessionMaintenance()`。
+6. `#onSessionEvent`：非本桥会话（既不在 `this.agents` 也不以 `qq-` 开头）不再完全静默，
+   每个 session id 记一次 debug（上限 200 个 id），便于排查"handoff 子会话在跑但输出没人发到 QQ"。
+
+### 验证
+- `node test/session-ownership-unit.mjs`：14 passed / 0 failed
+  新增 2 项：启动对账跟到 handoff 子会话（真实 zstd 首帧 fixture）、对账不新建会话
+- `node test/workspace-unit.mjs`：18 passed / 0 failed
+
+### 已知边界
+- 对账只认 `header.parentSession`：桥接旧版"抢不到就新建"产生的历史 fork
+  （如 muzu6cn9 -> muzv9i7c -> muzvkzan）没有该字段，连不回来，属预期。

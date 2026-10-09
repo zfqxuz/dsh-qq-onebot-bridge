@@ -14,6 +14,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { zstdCompressSync } from 'node:zlib'
 import { Config } from '../lib/index.js'
 import { QQBridge } from '../lib/bridge.js'
 
@@ -343,6 +344,33 @@ check('新会话收到 recall 摘要', (w4.built.at(-1)?.followups ?? []).join('
   JSON.stringify((w4.built.at(-1)?.followups ?? []).map((t) => t.slice(0, 24))))
 check('QQ 收到交接提示', server4.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n').includes('交接'),
   server4.sent.length + ' 条')
+
+// --- 5. 启动对账：沿 header.parentSession 跟到 handoff 子会话 ---
+const CHILD_ID = 'session-33333333-3333-4333-8333-333333333333'
+{
+  const dir = join(sessionRoot, projectKey(stateDir), CHILD_ID)
+  mkdirSync(dir, { recursive: true })
+  const header = {
+    type: 'session', version: 4, id: CHILD_ID, createdAt: Date.now(), cwd: stateDir,
+    parentSession: afterTransfer, isSeeded: false, delegationDepth: 0, agentPreset: 'qq-coding',
+  }
+  writeFileSync(join(dir, 'session.v4.jsonl.zstd'), zstdCompressSync(Buffer.from(`${JSON.stringify(header)}\n`, 'utf8')))
+  writeFileSync(join(dir, 'session.lock'), '')
+}
+const w5 = makeCtx2()
+const server5 = new MockServer()
+const config5 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: true,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge5 = new QQBridge(w5.ctx, config5, server5, { info() {}, warn() {}, error() {} })
+bridge5.start()
+await new Promise((r) => setTimeout(r, 500))
+check('启动对账跟到 handoff 子会话', readStored('u:1001') === CHILD_ID, `bound=${readStored('u:1001')}`)
+check('对账不新建会话', w5.createCalls.length === 0, `createCalls=${JSON.stringify(w5.createCalls)}`)
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
