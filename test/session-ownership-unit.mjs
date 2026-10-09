@@ -104,7 +104,7 @@ class MockServer extends EventEmitter {
   currentSocket() { return this.socket }
 }
 
-function makeCtx({ workspaceRegistry = null } = {}) {
+function makeCtx({ workspaceRegistry = null, throwOnProperty = [] } = {}) {
   const handlers = new Map()
   const built = []
   const emitSession = (sessionId, text) => {
@@ -140,7 +140,10 @@ function makeCtx({ workspaceRegistry = null } = {}) {
       handlers.set(event, list)
       return () => {}
     },
+    // 注意：Cordis 里 ctx.get(name) 只对已声明 inject 的服务有效；未 inject 的服务要
+    // 走 ctx.reflect.get(name, false)。这里两种形状都提供，测试真实取法。
     get: (name) => (name === 'workspaceRegistry' ? workspaceRegistry : undefined),
+    reflect: { get: (name) => (name === 'workspaceRegistry' ? workspaceRegistry : undefined) },
     agents: {
       create: async (options) => build(options.sessionId, options),
       resume: async (options) => build(options.resumeSessionId, options),
@@ -148,7 +151,16 @@ function makeCtx({ workspaceRegistry = null } = {}) {
     agentDefaultModel: { currentSelection: () => ({ provider: 'test', model: 'test' }) },
     logger: () => ({ info() {}, warn() {}, error() {} }),
   }
-  return { ctx, built }
+  // 需要复刻 Cordis「未 inject 的服务，属性访问会抛」的行为时包一层 Proxy。
+  const exposed = throwOnProperty.length === 0 ? ctx : new Proxy(ctx, {
+    get(target, prop, receiver) {
+      if (throwOnProperty.includes(prop) && !(prop in target)) {
+        throw new Error(`cannot get property \"${String(prop)}\" without inject`)
+      }
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+  return { ctx: exposed, built }
 }
 
 const config = Config({
@@ -214,8 +226,8 @@ const readBinding = (key) => {
 // ===========================================================================
 
 /** 造一个"宿主重启后"的新桥实例：ctx 可注入 resume 行为。 */
-function makeCtx2({ resumeError = null, workspaceRegistry = null } = {}) {
-  const base = makeCtx({ workspaceRegistry })
+function makeCtx2({ resumeError = null, workspaceRegistry = null, throwOnProperty = [] } = {}) {
+  const base = makeCtx({ workspaceRegistry, throwOnProperty })
   const resumeCalls = []
   const createCalls = []
   const createMetas = []
@@ -469,7 +481,8 @@ const workspaceRegistry = {
     }
   },
 }
-const w8 = makeCtx2({ workspaceRegistry })
+// throwOnProperty: 就算属性访问会抛，也必须走 reflect.get 这条路（复刻真实 Cordis）
+const w8 = makeCtx2({ workspaceRegistry, throwOnProperty: ['workspaceRegistry'] })
 const server8 = new MockServer()
 const config8 = Config({
   cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
@@ -490,6 +503,45 @@ check('续接的工作区会话被登记进 workspaceRegistry', wsr.appended.inc
 check('启动回填把工作区目录下未登记的会话补上', wsr.appended.includes(WS_EXTRA), JSON.stringify(wsr.appended))
 check('成员登记写进 trace（stage=workspace）', hasStage(bridge8, 'workspace'),
   JSON.stringify((bridge8.trace?.recent({ limit: 5, stage: 'workspace' }) ?? []).map((e) => e.reason)))
+
+// --- 9. 回归（2026-10-09 事故）：取 workspaceRegistry 失败时，绑定与启动都不能崩 ---
+// 精确复刻当时的现场：ctx.get(name) 返回 undefined、ctx.reflect 不存在、
+// 属性访问抛 `cannot get property "workspaceRegistry" without inject`。
+// 旧代码写成 `ctx.get(n) ?? ctx[n]` → 抛在 preclaim 链上 → 宿主 fatal load failure 起不来。
+const w9 = makeCtx2({ workspaceRegistry: null, throwOnProperty: ['workspaceRegistry'] })
+const server9 = new MockServer()
+const config9 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: false,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+let bridge9Started = true
+let bridge9
+try {
+  bridge9 = new QQBridge(w9.ctx, config9, server9, { info() {}, warn() {}, error() {} })
+  bridge9.start()
+} catch (error) {
+  bridge9Started = false
+}
+await new Promise((r) => setTimeout(r, 300))
+server9.emit('message', {
+  bot: server9.socket, userId: 1001, messageType: 'private', groupId: 0, text: '取服务失败也要能绑', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'r1', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 400))
+const reply9 = server9.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n')
+// 注：makeCtx2 的 resume 分支只记录 followup、不回放 assistant 事件，
+// 所以这里断言"消息仍被交给 agent"——足以证明绑定链路没被取服务失败带崩。
+const handed9 = (w9.built.at(-1)?.followups ?? []).join('')
+check('取服务失败时桥接照常启动（不再 fatal）', bridge9Started)
+check('取服务失败时绑定照样工作（消息仍交给 agent）', handed9.includes('取服务失败也要能绑'), handed9.slice(0, 60))
+check('取服务失败被记成一条 warn trace（stage=workspace, ok=false）',
+  (bridge9?.trace?.recent({ limit: 50, stage: 'workspace', ok: false }) ?? []).length > 0,
+  JSON.stringify((bridge9?.trace?.recent({ limit: 3, stage: 'workspace' }) ?? []).map((e) => e.reason)))
+check('取服务失败不影响绑定的 trace（stage=bind 仍在）', hasStage(bridge9, 'bind'),
+  JSON.stringify((bridge9?.trace?.recent({ limit: 3, stage: 'bind' }) ?? []).map((e) => e.reason)))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

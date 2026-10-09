@@ -437,3 +437,54 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 - `node test/session-ownership-unit.mjs`：**27 passed / 0 failed**（原 24）
   新增 3 项：续接的工作区会话被登记、启动回填补上未登记会话、登记写进 trace（stage=workspace）。
 - `node test/workspace-unit.mjs`：18 passed / 0 failed。
+
+## 事故复盘 + 修复：取宿主服务的写法把宿主启动打崩（2026-10-09）
+
+### 事故
+上线「工作区成员登记」后重启，宿主 `fatal load failure` 起不来：
+```
+Error: cannot get property "workspaceRegistry" without inject
+    at #ensureWorkspaceMembership (lib/bridge.js)
+    at #bindSession
+    at #preclaimSessions
+    at async #startSessionMaintenance
+```
+必须人工注释掉 `#bindSession` 里那行调用才恢复。**这是我的责任：改动上了启动关键路径，而且没做"取不到服务"的演练。**
+
+### 根因（用 Cordis 本体做隔离实验确认，非猜测）
+| 取法（消费者**未声明** inject 时） | 实测结果 |
+|---|---|
+| `ctx.get(name)` | 返回 `null`/`undefined` —— **它不是"无 inject 读取"入口**，只对已声明 inject 的服务有效 |
+| `ctx.reflect.get(name, false)` | ✅ 拿到服务 —— Cordis 文档写的 "Read a service from the store without the inject requirement" |
+| `ctx.reflect.get(name, true)` | `null`（strict 只认已激活提供者） |
+| `ctx[name]` 属性访问 | ❌ 抛 `cannot get property "..." without inject` |
+
+我写的是 `this.ctx?.get?.(n) ?? this.ctx?.workspaceRegistry` ——
+**等于用一个必然抛异常的表达式做兜底**。它抛在 `#preclaimSessions`（启动链）上，
+而 `#bindSession` 是同步函数、调用点用了 `void this.#asyncFn()`，
+异常变成 unhandled rejection，DSH 视作 fatal load failure → 宿主起不来。
+
+### 修复
+1. 新增 `#resolveService(name, ctx = this.ctx)`：三种取法**全部守卫**，任何失败都返回
+   `undefined`，**绝不抛**。顺序：`ctx.reflect.get(name,false)` → `ctx[name]`（guarded）。
+2. `#ensureWorkspaceMembership` / `#backfillWorkspaceMembership` 改用 `#resolveService`。
+3. `#bindSession` 的调用点加双保险：同步 `try/catch` + `.catch(() => {})`。
+   登记是**尽力而为**，绝不能影响绑定，更不能带崩启动链。
+4. 同类隐患一并修掉：`#applyRolePermission` 里的
+   `ctx.get('approval') ?? ctx.approval`（approval 也没在 inject 里，属性回落同样会抛）。
+5. `#noteWorkspaceRegistryOnce()`：只记一次诊断，日志里能直接看到"这次到底取到没有"。
+
+### 回归测试（关键：精确复刻事故现场）
+`test/session-ownership-unit.mjs` 新增第 9 节：构造一个 ctx，
+`ctx.get(name)` 返回 undefined、`ctx.reflect` 不存在、属性访问抛
+`cannot get property "workspaceRegistry" without inject` ——
+断言桥接**照常启动**、绑定照常工作（消息仍交给 agent）、并把失败记成一条
+`stage=workspace ok=false` 的 warn trace。旧代码在这一节会直接崩。
+
+第 8 节也改成按真实 API 形状注入（`reflect.get`），且故意让属性访问抛，
+证明代码走的是 `reflect.get` 而不是属性回落。
+
+### 验证
+- `node test/session-ownership-unit.mjs`：**31 passed / 0 failed**（原 27，新增 4）
+- `node test/workspace-unit.mjs`：18 passed / 0 failed
+- Cordis 隔离实验（3 种结构：无 inject / 自身有 inject / 嵌在 group 里）`reflect.get(n,false)` 均命中
