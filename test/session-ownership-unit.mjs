@@ -104,7 +104,9 @@ class MockServer extends EventEmitter {
   currentSocket() { return this.socket }
 }
 
-function makeCtx({ workspaceRegistry = null, throwOnProperty = [] } = {}) {
+function makeCtx({ workspaceRegistry = null, services = {}, throwOnProperty = [] } = {}) {
+  const serviceTable = { ...services }
+  if (workspaceRegistry !== null) serviceTable.workspaceRegistry = workspaceRegistry
   const handlers = new Map()
   const built = []
   const emitSession = (sessionId, text) => {
@@ -142,8 +144,8 @@ function makeCtx({ workspaceRegistry = null, throwOnProperty = [] } = {}) {
     },
     // 注意：Cordis 里 ctx.get(name) 只对已声明 inject 的服务有效；未 inject 的服务要
     // 走 ctx.reflect.get(name, false)。这里两种形状都提供，测试真实取法。
-    get: (name) => (name === 'workspaceRegistry' ? workspaceRegistry : undefined),
-    reflect: { get: (name) => (name === 'workspaceRegistry' ? workspaceRegistry : undefined) },
+    get: (name) => serviceTable[name],
+    reflect: { get: (name) => serviceTable[name] },
     agents: {
       create: async (options) => build(options.sessionId, options),
       resume: async (options) => build(options.resumeSessionId, options),
@@ -226,8 +228,8 @@ const readBinding = (key) => {
 // ===========================================================================
 
 /** 造一个"宿主重启后"的新桥实例：ctx 可注入 resume 行为。 */
-function makeCtx2({ resumeError = null, workspaceRegistry = null, throwOnProperty = [] } = {}) {
-  const base = makeCtx({ workspaceRegistry, throwOnProperty })
+function makeCtx2({ resumeError = null, workspaceRegistry = null, services = {}, throwOnProperty = [] } = {}) {
+  const base = makeCtx({ workspaceRegistry, services, throwOnProperty })
   const resumeCalls = []
   const createCalls = []
   const createMetas = []
@@ -542,6 +544,32 @@ check('取服务失败被记成一条 warn trace（stage=workspace, ok=false）'
   JSON.stringify((bridge9?.trace?.recent({ limit: 3, stage: 'workspace' }) ?? []).map((e) => e.reason)))
 check('取服务失败不影响绑定的 trace（stage=bind 仍在）', hasStage(bridge9, 'bind'),
   JSON.stringify((bridge9?.trace?.recent({ limit: 3, stage: 'bind' }) ?? []).map((e) => e.reason)))
+
+// --- 10. guest 联网：web 服务经 reflect 取到后必须真的注册成工具 ---
+// 旧代码 `agentCtx?.get?.('web') ?? this.ctx?.get?.('web')` 在 Cordis 下恒为 undefined，
+// guest 的 web_search/web_fetch 一直静默没注册。改用 #resolveService 后应当注册成功。
+const w10 = makeCtx2({ services: { web: { search: async () => ({ sources: [] }), fetch: async () => ({}) } } })
+const server10 = new MockServer()
+const config10 = Config({
+  cwd: stateDir, allowUsers: [1002], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: false,
+  identity: {
+    enabled: true, map: { 1002: 'guest' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } },
+  },
+})
+const bridge10 = new QQBridge(w10.ctx, config10, server10, { info() {}, warn() {}, error() {} })
+bridge10.start()
+server10.emit('message', {
+  bot: server10.socket, userId: 1002, messageType: 'private', groupId: 0, text: '联网测试', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'g1', senderName: 'guest', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 500))
+const guestToolNames = (w10.built.at(-1)?.tools ?? []).map((tool) => tool?.name)
+check('guest 的 web 服务经 reflect 取到后真的注册了 web_search',
+  guestToolNames.includes('web_search'), JSON.stringify(guestToolNames.slice(0, 8)))
+check('guest 也注册了 web_fetch', guestToolNames.includes('web_fetch'), JSON.stringify(guestToolNames.slice(0, 8)))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

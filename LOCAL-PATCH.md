@@ -488,3 +488,18 @@ Error: cannot get property "workspaceRegistry" without inject
 - `node test/session-ownership-unit.mjs`：**31 passed / 0 failed**（原 27，新增 4）
 - `node test/workspace-unit.mjs`：18 passed / 0 failed
 - Cordis 隔离实验（3 种结构：无 inject / 自身有 inject / 嵌在 group 里）`reflect.get(n,false)` 均命中
+
+### 追加修复：另外三处同样的 `ctx.get()` 误用（用户确认要修）
+`#resolveService` 落地后，把剩下所有"取宿主服务"的地方统一过去。它们不会崩（没有属性回落），
+但会**静默取不到服务**：
+
+| 位置 | 原来 | 后果 | 现在 |
+|---|---|---|---|
+| `#registerScopedWebTools` | `agentCtx?.get?.('web') ?? this.ctx?.get?.('web')` | guest 的 `web_search`/`web_fetch` **一直没注册** | `this.#resolveService('web', agentCtx) ?? this.#resolveService('web')` |
+| `#imageBlocksFor` | `this.ctx.get('attachments')` | `visionMode: native` 静默退化成"图片存盘 + 读图工具" | `this.#resolveService('attachments')` |
+| `#transcribeViaDsh` 调用点 | `this.ctx?.get?.(DSH_SPEECH_SERVICE)` | DSH 本地语音识别服务取不到 | `this.#resolveService(DSH_SPEECH_SERVICE)` |
+| `#mountPreset` | `this.ctx?.get?.('agentPresets') ?? this.ctx?.agentPresets` | 侥幸能用（agentPresets 本来就在 inject 里），但注释是错的 | `this.#resolveService('agentPresets')` |
+
+测试：`session-ownership-unit.mjs` 新增第 10 节 —— 注入 mock `web` 服务后，guest 会话
+**真的注册出 `web_search` / `web_fetch`**（旧代码这条会失败）。
+合计 **33 passed / 0 failed**（session-ownership）+ **18 / 0**（workspace）。
