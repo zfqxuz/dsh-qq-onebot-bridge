@@ -6,7 +6,7 @@
 import { once } from 'node:events'
 import { createServer } from 'node:net'
 import { WebSocket } from 'ws'
-import { OneBotServer, mentionsByName, parseNotice, parseRequest, stripMentionName } from '../lib/onebot.js'
+import { OneBotServer, mentionsByName, parseNotice, parseRequest, stripMentionName, toOneBotFileSource } from '../lib/onebot.js'
 
 let passed = 0
 let failed = 0
@@ -221,7 +221,23 @@ check('收到入群请求事件', events.request.length === 1 && events.request[
     stripMentionName('@别人 /打卡名册', '小鲸鱼') === '@别人 /打卡名册')
 }
 
+// ===== toOneBotFileSource：NapCat 的 file 字段要 URL/file://，裸绝对路径会"识别URL失败" =====
+{
+  const cases = [
+    ['/home/zfq/qqbot/media/images/a.png', 'file:///home/zfq/qqbot/media/images/a.png'],
+    ['file:///home/zfq/a.png', 'file:///home/zfq/a.png'],
+    ['http://example.com/a.png', 'http://example.com/a.png'],
+    ['https://example.com/a.png', 'https://example.com/a.png'],
+    ['base64://AAAA', 'base64://AAAA'],
+    ['', ''],
+  ]
+  for (const [input, want] of cases) {
+    check('文件来源归一化：' + (input || '(空)'), toOneBotFileSource(input) === want, toOneBotFileSource(input))
+  }
+}
+
 client.close()
 await server.stop()
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
+
