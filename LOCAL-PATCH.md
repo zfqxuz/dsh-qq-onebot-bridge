@@ -554,3 +554,15 @@ workspace lookup failed for /home/zfq/dshbot:
 - 12b：**preclaim 抢先占位**（会话已 live）时，消息也必须触发延后回填。
 
 合计 **38 passed / 0 failed** + workspace **18 / 0**。
+
+### 追加：延后回填的触发器要在"全局会话事件"上，不能在 QQ 入站路径（2026-10-09）
+第一次挂的触发器位置错了：挂在 `#ensureSession`（QQ 入站路径）上。
+实测证据：重启后用户那条消息进来时日志是 `turn/start turn=14`，**没有** `msg from` /
+`session ready` —— 它是**从浏览器**发的（复用同一个 live agent），根本不经过桥接的 QQ 入站路径，
+于是"延后回填"永远不触发。本聊天的会话又常被 preclaim 抢先占位，`#bindSession` 那条路也不会走。
+
+修法：触发器挂到 `#onSessionEvent`（`ctx.on('session/event')`，**全局**监听，QQ 与浏览器回合
+都会经过）。`#ensureSession` / `#bindSession` 两处保留作为兜底（都是 fire-and-forget，不加延迟）。
+
+测试第 12c 节：启动期挂起后，只发一个**会话事件**（模拟浏览器回合，不经 QQ 路径）→ 断言回填被触发。
+合计 **40 passed / 0 failed** + workspace **18 / 0**。

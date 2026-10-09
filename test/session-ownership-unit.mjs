@@ -162,7 +162,9 @@ function makeCtx({ workspaceRegistry = null, services = {}, throwOnProperty = []
       return Reflect.get(target, prop, receiver)
     },
   })
-  return { ctx: exposed, built }
+  return { ctx: exposed, built, emitSessionEvent: (sessionId, event) => {
+    for (const handler of handlers.get('session/event') ?? []) handler({ id: sessionId }, event)
+  } }
 }
 
 const config = Config({
@@ -276,7 +278,7 @@ function makeCtx2({ resumeError = null, workspaceRegistry = null, services = {},
     base.built.push(record)
     return { agent, dispose: async () => {} }
   }
-  return { ctx: base.ctx, built: base.built, resumeCalls, createCalls, createMetas, emitted, emitCustom }
+  return { ctx: base.ctx, built: base.built, resumeCalls, createCalls, createMetas, emitted, emitCustom, emitSessionEvent: base.emitSessionEvent }
 }
 
 /** 桥接 trace 里是否出现过某个 stage（R11 可观测）。 */
@@ -680,6 +682,31 @@ server12b.emit('message', {
 })
 await new Promise((r) => setTimeout(r, 700))
 check('会话已被占位（live）时，消息也能触发延后回填', goodRef.appended.includes(WS_SESSION), JSON.stringify(goodRef.appended))
+
+// --- 12c. 浏览器发起的回合（不经 QQ 入站）也必须能触发延后回填 ---
+// 实测踩到：把触发器挂在 #ensureSession（QQ 入站路径）上，浏览器发的回合根本不经过它，
+// 于是"延后回填"永远不触发。正确位置是全局的 session/event 监听。
+goodRef.appended.length = 0
+const activeRef3 = { value: undefined }
+const w12c = makeCtx2({ reflectGet: null })
+w12c.ctx.reflect = { get: (name, strict) => (name === 'workspaceRegistry' ? (strict === true ? activeRef3.value : halfBaked) : undefined) }
+const server12c = new MockServer()
+const config12c = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: false,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge12c = new QQBridge(w12c.ctx, config12c, server12c, { info() {}, warn() {}, error() {} })
+bridge12c.start()
+await new Promise((r) => setTimeout(r, 350))          // 启动期未激活 -> 挂起
+check('12c 前置：启动期已挂起回填（未触碰半成品）', halfBaked.used === false)
+// 模拟"浏览器发起"的回合事件：不经 QQ 入站，只走全局 session/event
+activeRef3.value = goodRegistry
+w12c.emitSessionEvent(WS_SESSION, { type: 'turn/start', data: { turn: 1 } })
+await new Promise((r) => setTimeout(r, 600))
+check('12c 浏览器回合触发了延后回填', goodRef.appended.includes(WS_SESSION), JSON.stringify(goodRef.appended))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
