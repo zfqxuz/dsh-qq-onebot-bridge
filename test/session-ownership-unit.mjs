@@ -265,6 +265,9 @@ function makeCtx2({ resumeError = null } = {}) {
   return { ctx: base.ctx, built: base.built, resumeCalls, createCalls, createMetas, emitted, emitCustom }
 }
 
+/** 桥接 trace 里是否出现过某个 stage（R11 可观测）。 */
+const hasStage = (bridge, stage) => (bridge.trace?.recent({ limit: 5000, stage }) ?? []).length > 0
+
 const sessionStoreFile = join(stateDir, 'qq-sessions.json')
 const readStored = (key) => {
   if (!existsSync(sessionStoreFile)) return null
@@ -302,6 +305,9 @@ const reply2 = server2.sent.map((item) => item.segments.map((s) => s.data?.text 
 check('会话被占用时不新建会话（永不 fork）', w2.createCalls.length === 0, `createCalls=${JSON.stringify(w2.createCalls)}`)
 check('会话被占用时给出人话提示', reply2.includes('占用'), reply2.trim().slice(0, 120))
 check('会话被占用时绑定保持不变', readStored('u:1001') === boundSessionId, String(readStored('u:1001')))
+check('写权冲突写进 trace（stage=conflict, ok=false）',
+  (bridge2.trace?.recent({ limit: 5000, stage: 'conflict', ok: false }) ?? []).length > 0,
+  JSON.stringify((bridge2.trace?.recent({ limit: 5, stage: 'conflict' }) ?? []).map((e) => e.reason)))
 
 // --- 3. 启动占位：宿主启动时先把绑定会话抢下来 ---
 const w3 = makeCtx2()
@@ -317,6 +323,8 @@ bridge3.start()
 await new Promise((r) => setTimeout(r, 400))
 check('启动占位续接了绑定会话', w3.resumeCalls.includes(boundSessionId), `resumeCalls=${JSON.stringify(w3.resumeCalls)}`)
 check('启动占位不新建会话', w3.createCalls.length === 0, `createCalls=${JSON.stringify(w3.createCalls)}`)
+check('启动占位写进 trace（stage=preclaim）', hasStage(bridge3, 'preclaim'),
+  JSON.stringify((bridge3.trace?.recent({ limit: 3, stage: 'preclaim' }) ?? []).map((e) => e.reason)))
 
 // --- 4. 迁移契约：桥接认领并自建接续会话 ---
 const w4 = makeCtx2()
@@ -347,6 +355,8 @@ check('接续会话带 parentSession（对账链不断）', w4.createMetas.at(-1
   JSON.stringify(w4.createMetas.at(-1) ?? {}))
 check('QQ 收到交接提示', server4.sent.map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n').includes('交接'),
   server4.sent.length + ' 条')
+check('认领迁移写进 trace（stage=transfer）', hasStage(bridge4, 'transfer'),
+  JSON.stringify((bridge4.trace?.recent({ limit: 3, stage: 'transfer' }) ?? []).map((e) => e.reason)))
 
 // --- 5. 启动对账：沿 header.parentSession 跟到 handoff 子会话 ---
 const CHILD_ID = 'session-33333333-3333-4333-8333-333333333333'
@@ -374,6 +384,57 @@ bridge5.start()
 await new Promise((r) => setTimeout(r, 500))
 check('启动对账跟到 handoff 子会话', readStored('u:1001') === CHILD_ID, `bound=${readStored('u:1001')}`)
 check('对账不新建会话', w5.createCalls.length === 0, `createCalls=${JSON.stringify(w5.createCalls)}`)
+check('启动对账写进 trace（stage=reconcile）', hasStage(bridge5, 'reconcile'),
+  JSON.stringify((bridge5.trace?.recent({ limit: 3, stage: 'reconcile' }) ?? []).map((e) => e.reason)))
+
+// --- 6. /handoff status：绑定 + 开关 + 最近生命周期事件一屏可见（R11）---
+const w6 = makeCtx2()
+const server6 = new MockServer()
+const config6 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999,
+  adminEnabled: true, adminUsers: [1001],
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: true, reconcileSessions: true,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge6 = new QQBridge(w6.ctx, config6, server6, { info() {}, warn() {}, error() {} })
+bridge6.start()
+await new Promise((r) => setTimeout(r, 400))
+const before6 = server6.sent.length
+server6.emit('message', {
+  bot: server6.socket, userId: 1001, messageType: 'private', groupId: 0, text: '/handoff status', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'h1', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 300))
+const reply6 = server6.sent.slice(before6).map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n')
+check('/handoff status 有回复', reply6.includes('交接状态'), reply6.trim().slice(0, 60))
+check('/handoff status 显示绑定会话', reply6.includes(String(readStored('u:1001')).slice(0, 12)), reply6.slice(0, 200))
+check('/handoff status 显示开关', reply6.includes('启动占位=on') && reply6.includes('启动对账=on'), '')
+check('/handoff status 列出生命周期事件',
+  reply6.includes('最近交接事件') && (reply6.includes('[preclaim]') || reply6.includes('[bind]') || reply6.includes('[reconcile]')),
+  reply6.split('\n').slice(-3).join(' | '))
+
+// --- 7. /handoff status 对非管理员关闭 ---
+const w7 = makeCtx2()
+const server7 = new MockServer()
+const config7 = Config({
+  cwd: stateDir, allowUsers: [1002], acceptPrivate: true, botQq: 999,
+  adminEnabled: true, adminUsers: [1001],
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  identity: { enabled: true, map: { 1001: 'owner', 1002: 'guest' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const bridge7 = new QQBridge(w7.ctx, config7, server7, { info() {}, warn() {}, error() {} })
+bridge7.start()
+const before7 = server7.sent.length
+server7.emit('message', {
+  bot: server7.socket, userId: 1002, messageType: 'private', groupId: 0, text: '/handoff status', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'h2', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 300))
+const reply7 = server7.sent.slice(before7).map((i) => i.segments.map((x) => x.data?.text ?? '').join('')).join('\n')
+check('/handoff status 拒绝非管理员', reply7.includes('只对管理员开放'), reply7.trim().slice(0, 60))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

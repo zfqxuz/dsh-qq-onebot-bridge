@@ -366,3 +366,38 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 - 重启后没人能把它和原会话关联起来。
 修法：`#createSession(message, key, { cwd, parentSession })` 透传 meta，认领时传 `fromSessionId`。
 用例：session-ownership-unit「接续会话带 parentSession（对账链不断）」。
+
+## 可观测性：绑定/占位/对账/认领/冲突进 trace + `/handoff status`（阶段 4 第一批，2026-10-09）
+
+### 背景
+阶段 2 的这些路径原来只有 `debugLog` 和 `logger.info`，`qq-trace.jsonl` 里看不到——
+出问题时只能蹲文件日志。R11 要求「绑定 / preclaim / 认领 / 迁移 / 冲突进 qq-trace；
+`/handoff status` 可见」。
+
+### 改动（lib/bridge.js，均带 [本地补丁] 标记）
+1. `#bindSession(key, sessionId, source = 'open')`：绑定是单一事实源，所有收敛路径都经它落
+   一条 `stage: 'bind'` trace，带 `source`（`preclaim` / `reconcile` / `reclaim` / `open` …）
+   和 `scope`（`workspace` / `chat`）。调用点相应标了来源。
+2. `#preclaimSessions`：成功 `stage:'preclaim' ok:true`，失败 `ok:false` 且带
+   `writerHeld`（复用 `#isWriterHeld`），能区分"被占用跳过"和"别的错跳过"。
+3. `#reconcileSessions`：重绑时 `stage:'reconcile'`，带 `from`/`to`。
+4. `#onTransferRequested`：认领 `stage:'transfer'`、完成（带 `digestChars`）、
+   广播失败 / 交接失败 `ok:false` 各一条。
+5. `#resolveOwnershipConflict`：重试夺回 `stage:'conflict' ok:true`，
+   最终拒绝 fork `ok:false` 且 `bindingKept:true` —— 这条是"永不 fork"承诺的审计线索。
+6. 新增 `/handoff [status]` 命令（仅管理员）：一屏显示
+   工作区 / 绑定会话 / live agent 状态 / 认领迁移·启动占位·启动对账三个开关 /
+   最近 6 条生命周期事件（transfer / conflict / preclaim / reconcile / bind，含时间与 ✓✗）。
+   非管理员被明确拒绝。
+
+### 验证
+- `node test/session-ownership-unit.mjs`：**24 passed / 0 failed**（原 15 项）
+  新增：写权冲突 / 启动占位 / 认领迁移 / 启动对账 各自写进 trace；
+  `/handoff status` 有回复、显示绑定、显示开关、列出生命周期事件；非管理员被拒。
+- `node test/workspace-unit.mjs`：18 passed / 0 failed
+- `npm run test:session` 全绿（18 + 24）
+
+### 说明
+`mark()`（单条消息的 trace 链）与这些生命周期事件是两条互补的线：
+- `mark` 回答"这条消息经历了什么"；
+- 新增的 bind/preclaim/reconcile/transfer/conflict 回答"这个聊天的归属是怎么收敛的"。
