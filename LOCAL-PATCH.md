@@ -520,3 +520,37 @@ Error: cannot get property "workspaceRegistry" without inject
 
 测试：新增第 11 节 —— registry 只有 `list()`、没有 `resolveByPath` 时，登记依然成功。
 合计 **34 passed / 0 failed** + workspace **18 / 0**。
+
+### 追加：为什么"取到了服务"却登记不上 —— 半初始化实例（2026-10-09 第二次）
+带诊断重启后拿到决定性一行：
+```
+workspaceRegistry resolved … list=function … shapeProbeFailed=
+  workspace registry order references missing workspace '864902b6-…'（= dshbot 工作区 id）
+workspace lookup failed for /home/zfq/dshbot:
+  resolveByPath=undefined | list threw: (同上)
+```
+即：`state.workspaceIds` 有 5 条（含 dshbot），但 `entities` 里缺 dshbot → `list()` 抛。
+
+**根因**：`ctx.reflect.get(name, false)` 的语义是"连**未激活**的提供者也返回"
+（`_getImpl(name, strict)` 里 `strict && impl.fiber.state !== 2` 才过滤）。
+而我的调用点在 **startup 的 preclaim/backfill**，那时 workspaceRegistry 的 fiber 还没激活完：
+`state` 已从文件读好、`entities` 还没 `rebuildEntities()`（少最后建的那个工作区）。
+所以每次拿到的都是半成品。DSH 自己的 `dsh-api-session-controller` 用的是
+`this.ctx.workspaceRegistry` + `static inject = ['workspaceRegistry']` —— 走 inject 才拿到激活实例。
+
+**修法**：
+1. `#resolveServiceMode(name, ctx, activeOnly)`：默认**先 strict=true**（只要已激活的），
+   只有显式 `activeOnly=false` 才退到 strict=false。属性访问始终守卫。
+2. `#resolveWorkspaceRegistry()`：**只认激活实例**；启动期拿不到就返回 undefined。
+3. `#backfillWorkspaceMembership()`：拿不到就置 `workspaceBackfillPending = true` 并返回
+   （**不再退而求其次用半成品**），等第一次真实会话活动再补。
+4. 触发器挂在两个地方：`#ensureSession`（必须！本聊天常被 preclaim 抢占，
+   之后消息走"已有 entry 直接返回"分支、不经过 `#bindSession`）与 `#bindSession`。
+
+**测试**（session-ownership 第 12 / 12b 节）：
+- 启动期 `strict=true` 返回 undefined、`strict=false` 返回一个 `list()` 会抛的半成品 →
+  断言**不崩**且**绝不触碰半成品**（`halfBaked.list` 未被调用）；
+- 激活后发一条消息 → 延后的登记被补上；
+- 12b：**preclaim 抢先占位**（会话已 live）时，消息也必须触发延后回填。
+
+合计 **38 passed / 0 failed** + workspace **18 / 0**。

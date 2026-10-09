@@ -104,7 +104,7 @@ class MockServer extends EventEmitter {
   currentSocket() { return this.socket }
 }
 
-function makeCtx({ workspaceRegistry = null, services = {}, throwOnProperty = [] } = {}) {
+function makeCtx({ workspaceRegistry = null, services = {}, throwOnProperty = [], reflectGet = null } = {}) {
   const serviceTable = { ...services }
   if (workspaceRegistry !== null) serviceTable.workspaceRegistry = workspaceRegistry
   const handlers = new Map()
@@ -145,7 +145,7 @@ function makeCtx({ workspaceRegistry = null, services = {}, throwOnProperty = []
     // 注意：Cordis 里 ctx.get(name) 只对已声明 inject 的服务有效；未 inject 的服务要
     // 走 ctx.reflect.get(name, false)。这里两种形状都提供，测试真实取法。
     get: (name) => serviceTable[name],
-    reflect: { get: (name) => serviceTable[name] },
+    reflect: { get: reflectGet ?? ((name) => serviceTable[name]) },
     agents: {
       create: async (options) => build(options.sessionId, options),
       resume: async (options) => build(options.resumeSessionId, options),
@@ -228,8 +228,8 @@ const readBinding = (key) => {
 // ===========================================================================
 
 /** 造一个"宿主重启后"的新桥实例：ctx 可注入 resume 行为。 */
-function makeCtx2({ resumeError = null, workspaceRegistry = null, services = {}, throwOnProperty = [] } = {}) {
-  const base = makeCtx({ workspaceRegistry, services, throwOnProperty })
+function makeCtx2({ resumeError = null, workspaceRegistry = null, services = {}, throwOnProperty = [], reflectGet = null } = {}) {
+  const base = makeCtx({ workspaceRegistry, services, throwOnProperty, reflectGet })
   const resumeCalls = []
   const createCalls = []
   const createMetas = []
@@ -601,6 +601,85 @@ server11.emit('message', {
 })
 await new Promise((r) => setTimeout(r, 500))
 check('没有 resolveByPath 时用 list() 回落也能登记进工作区', wsrB.appended.includes(WS_SESSION), JSON.stringify(wsrB.appended))
+
+// --- 12. 回归（2026-10-09 第二次事故根因）：启动期不得使用"半初始化"的 registry ---
+// 实测现场：reflect.get(n,false) 会返回 fiber 还没激活完的实例 —— state 已从文件读好，
+// 但 entities 还没重建（少一个工作区），list() 直接抛
+// "workspace registry order references missing workspace"。写进 workspace 的调用发生在
+// startup 的 preclaim/backfill 里，所以每次拿到的都是这个半成品。
+// 正确姿势：只认已激活实例（strict=true）；启动期拿不到就把登记延后到第一次会话活动。
+const activeRef = { value: undefined }
+const halfBaked = {
+  used: false,
+  get sessionIds() { return [] },
+  list() { halfBaked.used = true; throw new Error("workspace registry order references missing workspace 'ws-x'") },
+}
+const goodRef = { appended: [] }
+const goodRegistry = {
+  async list() {
+    return [{
+      id: 'ws-z', path: stateDir,
+      get sessionIds() { return [...goodRef.appended] },
+      async attachSession(id) { if (!goodRef.appended.includes(id)) goodRef.appended.push(id) },
+    }]
+  },
+  async resolveByPath(path) { return (await this.list()).find((w) => w.path === path) },
+}
+const reflectGet12 = (name, strict) => {
+  if (name !== 'workspaceRegistry') return undefined
+  if (strict === true) return activeRef.value      // 启动期还没激活 -> undefined
+  return halfBaked                                  // 未激活查询会拿到半成品
+}
+const w12 = makeCtx2({ reflectGet: reflectGet12 })
+const server12 = new MockServer()
+const config12 = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: false, reconcileSessions: false,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+let bridge12Started = true
+try {
+  const bridge12 = new QQBridge(w12.ctx, config12, server12, { info() {}, warn() {}, error() {} })
+  bridge12.start()
+} catch { bridge12Started = false }
+await new Promise((r) => setTimeout(r, 400))
+check('启动期 registry 未激活也不会崩', bridge12Started)
+check('启动期绝不触碰半初始化实例（halfBaked.list 未被调用）', halfBaked.used === false)
+// 现在"激活"它，模拟启动完成后第一条消息到达
+activeRef.value = goodRegistry
+server12.emit('message', {
+  bot: server12.socket, userId: 1001, messageType: 'private', groupId: 0, text: '激活后补登记', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'a1', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 700))
+check('registry 激活后，延后的登记被补上', goodRef.appended.includes(WS_SESSION), JSON.stringify(goodRef.appended))
+
+// 12b. 关键路径：本聊天被 preclaim 占位后，消息走的是 #ensureSession 的"已有 entry"分支，
+// 不经过 #bindSession —— 延后回填必须也能在这里被触发，否则永远不补。
+goodRef.appended.length = 0
+const w12b = makeCtx2({ reflectGet: reflectGet12, resumeError: null })
+const server12b = new MockServer()
+const config12b = Config({
+  cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
+  sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
+  preclaimSessions: true, reconcileSessions: false,
+  identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
+    roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
+})
+const activeRef2 = { value: undefined }
+w12b.ctx.reflect = { get: (name, strict) => (name === 'workspaceRegistry' ? (strict === true ? activeRef2.value : halfBaked) : undefined) }
+const bridge12b = new QQBridge(w12b.ctx, config12b, server12b, { info() {}, warn() {}, error() {} })
+bridge12b.start()
+await new Promise((r) => setTimeout(r, 400))     // preclaim 占位 -> backfill 挂起
+activeRef2.value = goodRegistry
+server12b.emit('message', {
+  bot: server12b.socket, userId: 1001, messageType: 'private', groupId: 0, text: '被占位后的消息', atMe: false,
+  ats: [], reply: null, records: [], images: [], files: [], messageId: 'a2', senderName: 'tester', raw: { message: [] },
+})
+await new Promise((r) => setTimeout(r, 700))
+check('会话已被占位（live）时，消息也能触发延后回填', goodRef.appended.includes(WS_SESSION), JSON.stringify(goodRef.appended))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)
