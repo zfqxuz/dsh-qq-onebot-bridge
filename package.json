@@ -18,7 +18,7 @@
   "scripts": {
     "control": "node control/bin/qq-control.mjs",
     "test": "node test/control-unit.mjs",
-    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs"
+    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

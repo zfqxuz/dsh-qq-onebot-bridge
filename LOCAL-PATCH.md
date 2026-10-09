@@ -596,3 +596,36 @@ watchdog 活在宿主**外面**：宿主死了它没法用 OneBot 发消息（�
 - 事故流水（down+restart+recovered/23s）→ 断言 QQ 收到"掉线告警…23 秒后恢复"；
 - 水位线已写；**同一批事故再启动一次不重复播报**；增量事故（最新 1s）能补报。
 合计 **44 passed / 0 failed** + workspace **18 / 0**。
+
+## 保留期清理：定时化 + 回收站二次清理 + qq-tts 纳入（2026-10-09，用户要求）
+
+### 起因（用户问"QQ 相关消息记录有定时清理吗"）
+查完发现三处不对：
+1. **不是"定时"**：图片/归档的保留期清理只在 `#startSessionCleanup` 那类启动路径里跑
+   （`start()` 里调一次 `#cleanupImageDirs()` + `#pruneArchive()`）——宿主长期不重启 = 不清理；
+2. **回收站只进不出**：第一道保留期把过期文件"移入" `qq-trash/<日期>/`（"绝不真删"的安全策略），
+   但 `qq-trash/` 本身**没有任何清理**，只增不减；
+3. **`qq-tts/` 是漏网的**：`#cleanupImageDirs` 只遍历 `imageDir / quoteDir / filesDir`。
+
+### 改动（lib/bridge.js + lib/index.js）
+1. `#cleanupImageDirs()`：遍历加入 `this.ttsDir`；返回 `{ moved }`。
+2. `#pruneArchive()`：返回 `result`（便于汇总日志）。
+3. 新增 `#pruneTrash()`：回收站二次清理。
+   - 阈值：`trashRetentionDays`（默认 30 天）+ `trashMaxBytes`（默认 512 MiB，0=不限）；
+   - **只认 `YYYY-MM-DD` 形式的日期桶名**，别的名字一律不碰；
+   - 按日期升序，"遇到第一个未过期的就停"；大小超限时也只从最老的开始补删；
+   - 真删前把 `回收到多少 KiB / 几个桶` 写进 debug + `stage:'archive'` trace。
+4. 新增 `#runRetentionSweep(reason)`：一条日志汇总三道清理（图片/归档/回收站）。
+5. 新增 `#startRetentionSweeper()`：`setInterval` 按 `retentionSweepHours`（默认 24h）定时跑；
+   timer 进 `this.timers`（`stop()` 会清）。
+   测试缝：环境变量 `QQ_RETENTION_SWEEP_MS` 可把间隔压到毫秒级。
+6. 配置：新增 `trashRetentionDays` / `trashMaxBytes` / `retentionSweepHours`；
+   修正 `imageTrashDir` 的描述（原写"回收站永不自动清理"，现在不成立了）。
+
+### 验证
+`test/retention-unit.mjs`（新增，12 项）：
+- 过期图片/引用/tts 移出原目录、新鲜文件不误清；移入的是**当天**日期桶；
+- 超 30 天的回收站桶被真删、今天的桶保留、**非日期名目录一律不碰**；
+- 大小上限：超限时先删最老的桶、上限内保留较新的；
+- **定时**：启动清理之后再造一个过期桶，靠周期那一轮清掉（不重启）。
+`npm run test:session` 全绿：workspace 18 / session-ownership 44 / retention 12。
