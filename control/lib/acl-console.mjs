@@ -17,6 +17,7 @@ import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
 import { collectStatus, fetchQrImage, napcatWebUiUrl } from './status-page.mjs'
+import { keyFingerprint, listPlugins, sshTest, updateHomePluginValue } from './plugin-manager.mjs'
 
 const MAX_BODY = 256 * 1024
 
@@ -279,6 +280,14 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
       res.end(html)
       return
     }
+    if (url.pathname === '/plugins' || url.pathname === '/plugins.html') {
+      const pluginsHtml = existsSync(new URL('../plugins-ui.html', import.meta.url))
+        ? readFileSync(new URL('../plugins-ui.html', import.meta.url), 'utf8')
+        : '<!doctype html><meta charset="utf-8"><h1>插件与密钥</h1><p>缺少 control/plugins-ui.html</p>'
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(pluginsHtml)
+      return
+    }
     if (url.pathname === '/status' || url.pathname === '/status.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       res.end(statusHtml)
@@ -288,6 +297,26 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
     if (provided !== token) return json(res, 401, { ok: false, error: 'token 不对' })
 
     // ---- [阶段 0] 状态台 / 扫码接口（只读；重启宿主是唯一的写动作，且要 token）----
+    if (req.method === 'GET' && url.pathname === '/api/plugins') {
+      return json(res, 200, await listPlugins({ dshHome: process.env.DSH_HOME || '/home/zfq/.dsh', profile: process.env.QQ_PROFILE || 'web' }))
+    }
+    if (req.method === 'POST' && url.pathname === '/api/plugins/config') {
+      const body = (await readBody(req)) ?? {}
+      const result = updateHomePluginValue({ dshHome: process.env.DSH_HOME || '/home/zfq/.dsh', id: String(body.id ?? ''), key: String(body.key ?? ''), value: body.value })
+      return json(res, result.ok ? 200 : 400, result)
+    }
+    if (req.method === 'GET' && url.pathname === '/api/plugins/key-fingerprint') {
+      const keyPath = String(url.searchParams.get('path') ?? '')
+      if (keyPath !== '' && !keyPath.startsWith('/home/zfq/')) return json(res, 400, { ok: false, error: '只允许 /home/zfq 下的 key 路径' })
+      return json(res, 200, await keyFingerprint(keyPath))
+    }
+    if (req.method === 'POST' && url.pathname === '/api/plugins/ssh-test') {
+      const body = (await readBody(req)) ?? {}
+      return json(res, 200, await sshTest({
+        host: String(body.host ?? ''), user: String(body.user ?? ''),
+        port: Number(body.port ?? 22) || 22, keyPath: String(body.keyPath ?? ''),
+      }))
+    }
     if (req.method === 'GET' && url.pathname === '/api/status') {
       return json(res, 200, await collectStatus({ dataRoot }))
     }

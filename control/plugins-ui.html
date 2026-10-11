@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ 机器人插件与密钥</title>
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2a2f39; --fg:#e6e6e6; --muted:#8b93a1; --accent:#2b6cb0; --ok:#2f855a; --danger:#a03030; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.55 system-ui,-apple-system,"Noto Sans CJK SC",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:20; }
+  header b { color:#7cc4ff; } header a { color:#9ecbff; text-decoration:none; }
+  main { padding:16px; display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:15px; color:#9ecbff; }
+  .row { padding:4px 0; border-bottom:1px dashed rgba(255,255,255,.06); }
+  .row:last-child { border-bottom:none; }
+  .k { color:var(--muted); } .muted { color:var(--muted); font-size:12px; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .up { background:var(--ok); color:#fff; } .down { background:var(--danger); color:#fff; }
+  pre { margin:6px 0 0; padding:8px; background:#0f1115; border:1px solid var(--line); border-radius:8px; overflow:auto; max-height:260px; font-size:12px; }
+  input, select { background:#0f1115; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:4px 6px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:5px 10px; cursor:pointer; }
+  button.ghost { background:#2a3140; }
+  table { width:100%; border-collapse:collapse; } td, th { text-align:left; padding:3px 6px; border-bottom:1px dashed rgba(255,255,255,.06); font-weight:400; }
+</style>
+</head>
+<body>
+<header>
+  <b>插件与密钥</b>
+  <span class="muted" id="stamp"></span>
+  <span style="flex:1"></span>
+  <a id="statusLink" href="/status">状态台</a>
+  <a id="aclLink" href="/">权限/语料</a>
+  <button class="ghost" onclick="load()">刷新</button>
+</header>
+<main>
+  <section class="card"><h2>profile 依赖（bundles）</h2><div id="bundles"></div></section>
+  <section class="card"><h2>本地插件目录（~/.dsh/plugins）</h2><div id="locals"></div></section>
+  <section class="card" style="grid-column:1/-1"><h2>home patch 插件与配置（密钥已脱敏）</h2><div id="home"></div></section>
+  <section class="card"><h2>密钥</h2><div id="secrets"></div>
+    <div style="margin-top:8px">
+      <input id="keyPath" style="width:60%" placeholder="/home/zfq/.../admin.pem">
+      <button onclick="fingerprint()">查指纹</button>
+      <pre id="fpOut"></pre>
+    </div>
+  </section>
+  <section class="card"><h2>连通性测试（ssh，BatchMode + 5s 超时）</h2>
+    <div id="sshForm" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px"></div>
+    <button onclick="sshTest()">测试连接</button>
+    <pre id="sshOut"></pre>
+  </section>
+</main>
+<script>
+const token = new URLSearchParams(location.search).get('token') || '';
+const q = () => new URLSearchParams({ token }).toString();
+const esc = (v) => String(v ?? '').replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+const el = (id) => document.getElementById(id);
+document.getElementById('statusLink').href = '/status?' + q();
+document.getElementById('aclLink').href = '/?' + q();
+let cache = null;
+
+async function api(path, options) {
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(path + sep + q(), { headers: { 'content-type': 'application/json' }, ...options });
+  return r.json();
+}
+
+async function load() {
+  const d = await api('/api/plugins');
+  cache = d;
+  el('stamp').textContent = d.profile.dir;
+  el('bundles').innerHTML = d.profile.bundles.map((b) => `<div class="row">${esc(b.name)} <span class="muted">(${esc(b.source)})</span></div>`).join('') || '<div class="muted">（无）</div>';
+  el('locals').innerHTML = d.localPluginDirs.map((p) => `<div class="row">${esc(p.id)} <span class="pill ${p.broken ? 'down' : 'up'}">${p.broken ? '断链' : 'ok'}</span><div class="muted">${esc(p.target)} ${p.version ? '· v' + esc(p.version) : ''}</div></div>`).join('') || '<div class="muted">（无）</div>';
+  el('home').innerHTML = d.homePatch.plugins.map((p) => `
+    <div class="row"><b>${esc(p.id)}</b> <span class="muted">${esc(p.name)}</span>
+      <div class="muted">文件：${esc(p.file)}｜可改键：${p.configKeys.join(', ') || '（无）'}</div>
+      <pre>${esc(p.redacted)}</pre>
+      <div style="margin-top:6px" id="edit-${esc(p.id)}"></div>
+    </div>`).join('');
+  for (const p of d.homePatch.plugins) {
+    const box = el('edit-' + p.id);
+    const id = p.id;
+    for (const key of p.configKeys) {
+      const wrap = document.createElement('span');
+      wrap.style.marginRight = '10px';
+      wrap.innerHTML = `<span class="muted">${esc(key)}</span> <input data-id="${esc(id)}" data-key="${esc(key)}" placeholder="新值" style="width:130px"> <button class="ghost">改</button>`;
+      wrap.querySelector('button').onclick = async () => {
+        const input = wrap.querySelector('input');
+        if (input.value === '') return alert('先填新值');
+        const r = await api('/api/plugins/config', { method: 'POST', body: JSON.stringify({ id, key, value: input.value }) });
+        alert(r.ok ? `已写入 ${key}（备份：${r.backup}），改完需要重启宿主才生效` : `失败：${r.error}`);
+        if (r.ok) load();
+      };
+      box.appendChild(wrap);
+    }
+  }
+  const s = d.secrets;
+  el('secrets').innerHTML =
+    `<div class="row">credentials：${esc(s.credentialsFile)} <span class="muted">键：${s.credentialKeys.join(', ') || '（无）'}</span></div>`
+    + `<div class="row">NapCat WebUI token：<span class="pill ${s.napcatWebuiToken ? 'up' : 'down'}">${s.napcatWebuiToken ? '已设置' : '未设置'}</span></div>`
+    + (s.onebot ? `<div class="row">OneBot 连接 token：<span class="pill ${s.onebot.hasToken ? 'up' : 'down'}">${s.onebot.hasToken ? '已设置' : '未设置'}</span> <span class="muted">${esc(s.onebot.file)}</span></div>` : '');
+  const ecs = await api('/api/plugins').then((x) => x.homePatch.plugins.find((p) => p.id === 'ecs-n8n-gh'));
+  const sshBox = el('sshForm');
+  sshBox.innerHTML = '';
+  const ecsCfg = ecs ? ecs.redacted : '';
+  const get = (k) => (new RegExp(`${k}:\\s*'?([^'\\n]+)'?`).exec(ecsCfg) || [])[1] || '';
+  for (const [k, v] of [['host', get('ecsHost')], ['user', get('ecsUser')], ['port', get('ecsPort') || '22'], ['keyPath', get('sshKey')]]) {
+    sshBox.insertAdjacentHTML('beforeend', `<input id="ssh-${k}" placeholder="${k}" value="${esc(v.trim())}" style="width:${k === 'keyPath' ? '46%' : '14%'}">`);
+  }
+  el('keyPath').value = get('sshKey').trim();
+}
+
+async function fingerprint() {
+  const r = await api('/api/plugins/key-fingerprint?path=' + encodeURIComponent(el('keyPath').value));
+  el('fpOut').textContent = r.ok ? r.fingerprint : ('失败：' + r.error);
+}
+async function sshTest() {
+  el('sshOut').textContent = '测试中…';
+  const body = { host: el('ssh-host').value, user: el('ssh-user').value, port: el('ssh-port').value, keyPath: el('ssh-keyPath').value };
+  const r = await api('/api/plugins/ssh-test', { method: 'POST', body: JSON.stringify(body) });
+  el('sshOut').textContent = r.ok ? ('连通成功：\n' + r.output) : ('失败：\n' + r.output);
+}
+load();
+</script>
+</body>
+</html>

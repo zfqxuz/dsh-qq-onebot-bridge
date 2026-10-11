@@ -66,6 +66,8 @@
 </style>
 </head>
 <body>
+<div style="padding:6px 16px;background:#1c1f26;border-bottom:1px solid #2a2f39;font-size:13px"><a id="navStatus" href="/status" style="color:#9ecbff;text-decoration:none;margin-right:14px">状态台</a><a id="navPlugins" href="/plugins" style="color:#9ecbff;text-decoration:none">插件与密钥</a></div>
+<script>const _t=new URLSearchParams(location.search).get("token")||"";navStatus.href="/status?token="+encodeURIComponent(_t);navPlugins.href="/plugins?token="+encodeURIComponent(_t);</script>
 <header>
   <b>QQ 机器人权限控制台</b>
   <span class="pill" id="filePill">库：—</span>

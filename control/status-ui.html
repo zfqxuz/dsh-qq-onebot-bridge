@@ -31,6 +31,7 @@
   <span id="verdict" class="pill warn">读取中…</span>
   <span class="muted" id="stamp"></span>
   <span style="flex:1"></span>
+  <a id="pluginsLink" href="/plugins">插件与密钥</a>
   <a id="aclLink" href="/">权限/语料控制台</a>
   <button class="ghost" onclick="refresh(true)">立即刷新</button>
 </header>
@@ -80,6 +81,7 @@ function pill(ok, text, warn = false) { return `<span class="pill ${ok ? 'up' : 
 function bytes(n) { if (!n && n !== 0) return '?'; const u = ['B','K','M','G','T']; let i = 0; let v = n; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 1 : 0)}${u[i]}`; }
 function dur(s) { if (!s && s !== 0) return '?'; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}天${h}时` : (h ? `${h}时${m}分` : `${m}分${Math.floor(s % 60)}秒`); }
 el('aclLink').href = '/?token=' + encodeURIComponent(token);
+el('pluginsLink').href = '/plugins?token=' + encodeURIComponent(token);
 
 async function loadQr() {
   try {
