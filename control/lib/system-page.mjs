@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { dataRoot } from './paths.mjs'
 
 const DSH_ENV = process.env.QQ_DSH_ENV || join(homedir(), '.config/dsh-bot/dsh.env')
 
@@ -89,7 +90,6 @@ export async function readSystemPage() {
   }
 
   const tail = (file, n) => { try { return readFileSync(file, 'utf8').split('\n').filter(Boolean).slice(-n) } catch { return [] } }
-  const dataRoot = process.env.QQ_DATA_ROOT || '/home/zfq/qqbot'
   const incidents = tail(join(dataRoot, 'logs', 'dsh-watchdog-incidents.jsonl'), 8).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
   const proxy = (() => { try { return JSON.parse(readFileSync(join(dataRoot, 'state', 'proxy.json'), 'utf8')) } catch { return null } })()
 

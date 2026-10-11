@@ -35,7 +35,7 @@ const guestDir = join(root, 'qq-users', 'qqguest')
 mkdirSync(stateDir, { recursive: true })
 mkdirSync(guestDir, { recursive: true })
 
-const DEV_GROUP = 176628359        // 用户指定：开发群
+const DEV_GROUP = 123456        // 测试用：被整群升级为 owner 的"开发群"
 const OTHER_GROUP = 134993546      // 普通群：必须保持只读
 
 class MockServer extends EventEmitter {
@@ -190,7 +190,7 @@ async function send(server, { userId = 1002, messageType = 'group', groupId = DE
   const bridge = new QQBridge(ctx, makeConfig({ [`${DEV_GROUP}`]: 'owner' }), server, { info() {}, warn() {}, error() {} })
   bridge.start()
   await send(server, { groupId: DEV_GROUP })
-  check('字符串群号（配置里写成 "176628359"）命中 owner', built[0]?.meta?.agentPreset === 'qq-coding', `preset=${built[0]?.meta?.agentPreset}`)
+  check('字符串群号（配置里写成 "123456"）命中 owner', built[0]?.meta?.agentPreset === 'qq-coding', `preset=${built[0]?.meta?.agentPreset}`)
   bridge.stop()
 }
 

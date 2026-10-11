@@ -129,8 +129,8 @@ check('未知落点键直接抛错（不静默落到错路径）', (() => {
 })())
 
 // ===== 5. 主体命名空间 =====
-check('user: 主体 → subjects/u<qq>', subjectDir(modern, 'user:2493922172') === join(root, 'subjects', 'u2493922172'))
-check('group: 主体 → subjects/g<gid>', subjectDir(modern, 'group:176628359') === join(root, 'subjects', 'g176628359'))
+check('user: 主体 → subjects/u<qq>', subjectDir(modern, 'user:10001') === join(root, 'subjects', 'u10001'))
+check('group: 主体 → subjects/g<gid>', subjectDir(modern, 'group:123456') === join(root, 'subjects', 'g123456'))
 check('未知形状的 id 会被转义（不产生路径穿越）',
   subjectDir(modern, 'user:../evil').startsWith(join(root, 'subjects')) && !subjectDir(modern, 'user:../evil').includes('..'))
 check('共享区路径固定', sharedDir(modern) === join(root, 'subjects', 'shared'))

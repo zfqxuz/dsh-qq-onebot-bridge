@@ -29,6 +29,7 @@
   <span class="qqc-sub" id="rootInfo"></span>
   <nav>
     <a id="navStatus" href="/status">状态台</a>
+    <a href="/identity">身份</a>
     <a id="navAcl" href="/">权限与语料</a>
     <a href="#" onclick="doLogout();return false">退出</a>
   </nav>
@@ -60,10 +61,10 @@
   <header><h1>安装插件</h3></header>
   <div class="body">
     <div class="field">
-      <label>本地插件目录（/home/zfq 下，需含 package.json 与入口）</label>
+      <label>本地插件目录（需含 package.json 与入口）</label>
       <select id="candSelect" style="width:100%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:7px 9px"></select>
-      <div class="hint">列表来自 ~/dev/dsh-plugins；已安装的会标注。也可以直接输入绝对路径：</div>
-      <input type="text" id="candPath" placeholder="/home/zfq/dev/dsh-plugins/xxx" style="margin-top:6px">
+      <div class="hint">列表来自配置的插件源码目录（QQ_PLUGIN_SOURCES）；已安装的会标注。也可以直接输入绝对路径：</div>
+      <input type="text" id="candPath" placeholder="插件目录绝对路径" style="margin-top:6px">
     </div>
     <div id="installMsg" class="qqc-sub"></div>
   </div>
@@ -106,7 +107,7 @@ async function load() {
       <td><b>${esc(p.id)}</b><div class="qqc-sub">${esc(p.name)}</div></td>
       <td><div>${esc(p.kind === 'bundle' ? '内置/依赖' : '本地插件')}</div><div class="qqc-sub">${esc(p.source)}</div></td>
       <td>${esc(p.version || '-')}</td>
-      <td>${p.broken ? '<span class="qqc-badge bad">断链</span>' : (p.enabled ? '<span class="qqc-badge on">启用</span>' : '<span class="qqc-badge off">禁用</span>')}</td>
+      <td>${p.broken ? '<span class="qqc-badge bad">断链</span>' : (p.enabled ? '<span class="qqc-badge on">启用</span>' : '<span class="qqc-badge off">禁用</span>')}${p.optional && !p.configured ? ' <span class="qqc-badge off" title="配置留空时该插件的工具不注册">未配置</span>' : ''}</td>
       <td>${p.fieldCount || '<span class="qqc-sub">—</span>'}</td>
       <td><div class="actions">
         ${p.kind === 'local' ? `<button class="ghost" onclick="openConfig('${esc(p.id)}')" class="qqc-btn ghost">配置</button>
@@ -121,13 +122,16 @@ async function openConfig(id) {
   if (!d.ok) return alert(d.error);
   current = { id, fields: d.fields };
   el('cfgTitle').textContent = `配置 · ${id}`;
-  el('cfgFields').innerHTML = d.fields.map((f) => {
+  const hintBox = d.optional && !d.configured
+    ? `<div class="hint" style="margin-bottom:10px">未配置：${esc((d.missingKeys || []).join(' / '))} 为空。<br>${esc(d.configHint || '')}</div>`
+    : '';
+  el('cfgFields').innerHTML = hintBox + (d.fields.map((f) => {
     const hint = [f.desc, f.secret && f.hasValue ? '已设置（留空＝不修改）' : ''].filter(Boolean).join(' · ');
     let input = `<input type="${f.type === 'number' ? 'number' : (f.secret ? 'password' : 'text')}" data-key="${esc(f.key)}" value="${esc(f.value)}" placeholder="${f.secret && f.hasValue ? '已设置，留空不改' : ''}">`;
     if (f.type === 'bool') input = `<div class="switch"><input type="checkbox" data-key="${esc(f.key)}" ${String(f.value) === 'true' ? 'checked' : ''}> <span class="qqc-sub">开 / 关</span></div>`;
     if (f.type === 'select') input = `<select data-key="${esc(f.key)}">${(f.options || []).map((o) => `<option ${String(f.value) === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
     return `<div class="field"><label>${esc(f.label)} <span class="qqc-sub">(${esc(f.key)})</span></label>${input}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</div>`;
-  }).join('') || '<p class="qqc-sub">这个插件没有可配置字段。</p>';
+  }).join('') || '<p class="qqc-sub">这个插件没有可配置字段。</p>');
   // sshKey 的指纹 / 连通性快捷操作
   const keyField = d.fields.find((f) => f.key === 'sshKey');
   if (keyField) {

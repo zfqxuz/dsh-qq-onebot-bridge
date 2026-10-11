@@ -16,18 +16,19 @@ import { connect } from 'node:net'
 import * as nodeHttp from 'node:http'
 const require_http = () => nodeHttp
 import { join } from 'node:path'
+import { dataRoot as resolveDataRoot, napcatConfigDir as resolveNapcatConfigDir, restartScript as resolveRestartScript, dshVersion } from './paths.mjs'
 
-const DATA_ROOT = process.env.QQ_DATA_ROOT || '/home/zfq/qqbot'
+const DATA_ROOT = resolveDataRoot
 
 export function statusDefaults(overrides = {}) {
   return {
     dataRoot: DATA_ROOT,
     napcatContainer: process.env.QQ_NAPCAT_CONTAINER || 'napcat',
-    napcatConfigDir: process.env.QQ_NAPCAT_CONFIG_DIR || '/home/zfq/dshbot/qq/napcat-config',
+    napcatConfigDir: resolveNapcatConfigDir,
     napcatWebuiPort: Number(process.env.QQ_NAPCAT_WEBUI_PORT || 6099),
     bridgePort: Number(process.env.QQ_BRIDGE_PORT || 6700),
     dshPort: Number(process.env.QQ_DSH_PORT || 3080),
-    restartScript: process.env.QQ_RESTART_SCRIPT || '/home/zfq/dev/dshbot-ops/scripts/restart-dsh.sh',
+    restartScript: resolveRestartScript,
     ...overrides,
   }
 }
@@ -146,8 +147,7 @@ async function collectVersions() {
   const { ok, stdout } = await run('docker', ['inspect', statusDefaults().napcatContainer, '--format', '{{.Config.Image}}'], 6000)
   let bridge = ''
   try { bridge = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).version } catch { /* 忽略 */ }
-  let dsh = ''
-  try { dsh = JSON.parse(readFileSync('/home/zfq/node24/lib/node_modules/@deepseek-ai/dsh/package.json', 'utf8')).version } catch { /* 忽略 */ }
+  const dsh = dshVersion()
   return { node: process.version, dsh, bridge, napcatImage: ok ? stdout.trim() : '' }
 }
 

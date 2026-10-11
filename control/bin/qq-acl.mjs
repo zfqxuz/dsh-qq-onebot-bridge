@@ -12,9 +12,11 @@
  *   node control/bin/qq-acl.mjs deny user:1001 tool.shell
  *   node control/bin/qq-acl.mjs audit [n]
  *
- * 默认库文件：$QQ_ACL_DB 或 /home/zfq/qqbot/config/acl.db（--file 可覆盖）。
+ * 默认库文件：$QQ_ACL_DB 或 <数据根>/config/acl.db（--file 可覆盖）。
  */
 import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { resolvePath } from '../lib/paths.mjs'
 import { openAclStore } from '../../lib/acl-store.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 
@@ -26,7 +28,7 @@ const take = (name, fallback = '') => {
   args.splice(i, value && !value.startsWith('--') ? 2 : 1)
   return value && !value.startsWith('--') ? value : ''
 }
-const file = take('file') || process.env.QQ_ACL_DB || '/home/zfq/qqbot/config/acl.db'
+const file = take('file') || process.env.QQ_ACL_DB || join(resolvePath('QQ_DATA_ROOT', ['/data/qqbot', join(process.env.HOME || homedir(), 'qqbot')]), 'config', 'acl.db')
 const command = (args.shift() ?? 'show').toLowerCase()
 const rest = args
 const ACTOR = `cli:${process.env.USER ?? 'unknown'}`

@@ -53,7 +53,7 @@ check('未知权限点不算已知', !isKnownPermission('cmd.nope'))
 // ===== 4. 角色解析 =====
 const policy = emptyPolicy()
 check('内置角色有 admin 与 guest', Boolean(policy.roles.admin && policy.roles.guest))
-check('没有分配时落到默认角色 guest', rolesFor(policy, 'group:176628359').join(',') === 'guest')
+check('没有分配时落到默认角色 guest', rolesFor(policy, 'group:123456').join(',') === 'guest')
 check('admin 的授权里包含全部权限点基础',
   PERMISSIONS.every((item) => policy.roles.admin.permissions.includes(item.id)))
 const multi = emptyPolicy()
@@ -70,7 +70,7 @@ check('guest 能读自己的范围（own 解析成主体）',
 check('guest 读不了别的主体（群 A 读群 B）',
   evaluate(policy, 'group:100', { need: ['tool.fs.read:group:200'] }).allowed === false)
 check('guest 读不了别的主体（群读私聊）',
-  evaluate(policy, 'group:100', { need: ['tool.fs.read:user:2493922172'] }).allowed === false)
+  evaluate(policy, 'group:100', { need: ['tool.fs.read:user:10001'] }).allowed === false)
 check('guest 能读共享只读区', evaluate(policy, 'group:100', { need: ['tool.fs.read:shared'] }).allowed === true)
 check('guest 不能写任何范围', evaluate(policy, 'group:100', { need: ['tool.fs.write:group:100'] }).allowed === false)
 check('guest 不能执行 shell', evaluate(policy, 'group:100', { need: ['tool.shell'] }).allowed === false)

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>机器人身份</title>
+<link rel="stylesheet" href="/console.css">
+<style>
+  .qqc-table td .actions { display:flex; gap:6px; justify-content:flex-end; }
+  .qqc-table td .actions button { padding:4px 10px; font-size:12px; }
+  .qqc-in, .qqc-sel { background:var(--bg); color:var(--fg); border:1px solid var(--line2); border-radius:8px; padding:7px 9px; font-size:13px; font-family:var(--mono); }
+  .qqc-in:focus, .qqc-sel:focus { outline:2px solid rgba(88,166,255,.55); outline-offset:1px; border-color:transparent; }
+  .qqc-in { width:190px; }
+  .qqc-note { border-left:3px solid var(--line2); padding:8px 12px; margin:0 0 14px; }
+  .qqc-note.warn { border-left-color:#d29922; background:rgba(210,153,34,.08); }
+  .qqc-note.bad { border-left-color:#f0616d; background:rgba(240,97,109,.08); }
+  .qqc-note.ok { border-left-color:#31c48d; background:rgba(49,196,141,.07); }
+  .qqc-badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .qqc-badge.on { background:rgba(49,196,141,.14); color:#4ddba6; border:1px solid rgba(49,196,141,.35); }
+  .qqc-badge.off { background:rgba(120,133,154,.14); color:#9aa7b8; border:1px solid rgba(120,133,154,.35); }
+  .qqc-badge.role { background:rgba(76,141,255,.12); color:#8fb6ff; border:1px solid rgba(76,141,255,.3); }
+</style>
+</head>
+<body class="qqc">
+<div class="qqc-top"><div class="qqc-top-in">
+  <span class="qqc-title">机器人身份</span>
+  <span class="qqc-sub" id="whoami"></span>
+  <nav>
+    <a href="/status">状态台</a>
+    <a href="/plugins">插件</a>
+    <a href="/">权限与语料</a>
+    <a href="#" onclick="doLogout();return false">退出</a>
+    <button class="qqc-btn ghost sm" onclick="load()">刷新</button>
+  </nav>
+</div></div>
+
+<div class="qqc-wrap">
+  <div id="banner"></div>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">白名单（空 = 谁都不放行）</h2>
+    <p class="qqc-sub" style="margin-bottom:12px">
+      这些是<b>你自己账号的配置</b>：换个人登录 QQ，就在这里填他自己的号。留空是安全的出厂状态 ——
+      私聊与群都不会有任何响应。
+    </p>
+    <div class="qqc-grid">
+      <div>
+        <label class="qqc-sub">私聊允许的 QQ 号（一行一个）</label>
+        <textarea id="users" class="qqc-in" rows="6" style="width:100%;margin-top:6px" placeholder="10001&#10;10002"></textarea>
+      </div>
+      <div>
+        <label class="qqc-sub">允许的群号（一行一个）</label>
+        <textarea id="groups" class="qqc-in" rows="6" style="width:100%;margin-top:6px" placeholder="123456"></textarea>
+      </div>
+    </div>
+    <div style="margin-top:12px">
+      <label class="qqc-sub">机器人自己的 QQ 号（用于群里识别 @，0 = 每条群消息都算被提及）</label>
+      <input id="botQq" class="qqc-in" style="margin-left:8px">
+    </div>
+  </section>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">角色</h2>
+    <p class="qqc-sub" style="margin-bottom:12px">
+      角色决定"这个人能干什么"。可用角色来自 profile 配置里的 <code>identity.roles</code>：
+      <span id="roleList"></span>。角色名写错一律按最低角色处理（fail-closed）。
+    </p>
+    <div style="margin-bottom:14px">
+      <label class="qqc-sub">身份映射总开关（关掉 = 所有人按主人权限，仅用于排障）</label>
+      <div class="qqc-switch" style="margin-top:6px">
+        <input type="checkbox" id="identityEnabled"> <span class="qqc-sub">启用身份映射</span>
+      </div>
+    </div>
+    <div class="qqc-grid">
+      <div>
+        <label class="qqc-sub">私聊号 → 角色</label>
+        <table class="qqc-table" style="margin-top:6px">
+          <thead><tr><th>QQ 号</th><th>角色</th><th></th></tr></thead>
+          <tbody id="mapRows"></tbody>
+        </table>
+        <button class="qqc-btn ghost sm" onclick="addRow('mapRows')">+ 加一条</button>
+      </div>
+      <div>
+        <label class="qqc-sub">群 → 角色（整群升级，群里每个人都有该权限，慎用 owner）</label>
+        <table class="qqc-table" style="margin-top:6px">
+          <thead><tr><th>群号</th><th>角色</th><th></th></tr></thead>
+          <tbody id="groupRows"></tbody>
+        </table>
+        <button class="qqc-btn ghost sm" onclick="addRow('groupRows')">+ 加一条</button>
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:20px;flex-wrap:wrap">
+      <div>
+        <label class="qqc-sub">未列出的私聊号默认角色</label>
+        <select id="defaultRole" class="qqc-sel" style="display:block;margin-top:6px"></select>
+      </div>
+      <div>
+        <label class="qqc-sub">未列出的群默认角色</label>
+        <select id="groupRole" class="qqc-sel" style="display:block;margin-top:6px"></select>
+      </div>
+    </div>
+  </section>
+
+  <div class="bar">
+    <button class="qqc-btn" onclick="save()">保存</button>
+    <span class="grow"></span>
+    <span class="qqc-sub" id="msg"></span>
+  </div>
+  <p class="qqc-sub" id="where"></p>
+</div>
+
+<script>
+const el = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+let state = { roles: ['owner', 'guest'] };
+async function doLogout() { await fetch('/api/logout', { method: 'POST' }); location.href = '/login'; }
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/identity'); return { ok: false, error: '未登录' }; }
+  return res.json();
+}
+async function ensureSudo() {
+  const s = await fetch('/api/session').then((r) => r.json());
+  if (s.sudo) return true;
+  const pw = window.prompt('改身份配置需要确认登录密码（5 分钟内有效）');
+  if (!pw) return false;
+  const d = await fetch('/api/reauth', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) }).then((r) => r.json());
+  if (!d.ok) { setMsg('err', d.error || '密码不对'); return false; }
+  return true;
+}
+function setMsg(kind, text) { const n = el('msg'); n.className = 'qqc-sub ' + (kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : ''); n.textContent = text; }
+function setBanner(kind, html) { el('banner').innerHTML = `<div class="qqc-note ${kind}">${html}</div>`; }
+
+function roleOptions(selected) {
+  const names = state.roles.length ? state.roles : ['owner', 'guest'];
+  const list = names.includes(selected) || !selected ? names : [selected, ...names];
+  return list.map((r) => `<option value="${esc(r)}" ${r === selected ? 'selected' : ''}>${esc(r)}</option>`).join('');
+}
+function rowHtml(id, role) {
+  return `<tr>
+    <td><input class="qqc-in" data-id value="${esc(id)}" placeholder="数字号"></td>
+    <td><select class="qqc-sel" data-role>${roleOptions(role)}</select></td>
+    <td class="actions"><button class="qqc-btn ghost" onclick="this.closest('tr').remove()">删除</button></td>
+  </tr>`;
+}
+window.addRow = (bodyId) => el(bodyId).insertAdjacentHTML('beforeend', rowHtml('', ''));
+
+function fill(data) {
+  state.roles = data.roles || ['owner', 'guest'];
+  el('users').value = (data.allowUsers || []).join('\n');
+  el('groups').value = (data.allowGroups || []).join('\n');
+  el('botQq').value = data.botQq || 0;
+  el('identityEnabled').checked = data.identity?.enabled !== false;
+  el('defaultRole').innerHTML = roleOptions(data.identity?.defaultRole || state.roles[state.roles.length - 1]);
+  el('groupRole').innerHTML = roleOptions(data.identity?.groupRole || state.roles[state.roles.length - 1]);
+  el('mapRows').innerHTML = Object.entries(data.identity?.map || {}).map(([id, role]) => rowHtml(id, role)).join('');
+  el('groupRows').innerHTML = Object.entries(data.identity?.groupRoles || {}).map(([id, role]) => rowHtml(id, role)).join('');
+  el('roleList').textContent = state.roles.join(' / ');
+  el('where').textContent = `配置文件：${data.file}${data.exists ? '' : '（不存在）'} —— 本页只改白名单与角色这几个键，其它配置（人格、模型、ACL…）一字不动。`;
+  el('whoami').textContent = '';
+
+  if (!data.blockFound) {
+    setBanner('bad', `没找到桥接插件块（id: dsh-qq-onebot-bridge）。先确认桥接已装到这个 profile。`);
+  } else if (data.unconfigured) {
+    setBanner('warn', `<b>未配置：白名单是空的，现在谁都不放行。</b><br>把你的 QQ 号填到"私聊允许的 QQ 号"，需要服务的群号填到"允许的群号"，保存后重启宿主即可。`);
+  } else if (data.identity?.enabled === false) {
+    setBanner('bad', `<b>身份映射总开关是关的：现在所有人都按主人（owner）全权限处理。</b><br>只应在排障时这样，日常请打开。`);
+  } else {
+    const owners = Object.entries(data.identity?.map || {}).filter(([, r]) => String(r).includes('owner')).map(([id]) => id);
+    const groupOwners = Object.entries(data.identity?.groupRoles || {}).filter(([, r]) => String(r).includes('owner')).map(([id]) => id);
+    const detail = [
+      `${data.allowUsers.length} 个私聊号 / ${data.allowGroups.length} 个群`,
+      owners.length ? `主人：${owners.join('、')}` : '',
+      groupOwners.length ? `整群升级为 owner：${groupOwners.join('、')}` : '',
+    ].filter(Boolean).join(' · ');
+    setBanner('ok', `已配置：${esc(detail)}`);
+  }
+}
+async function load() {
+  const d = await api('/api/identity');
+  if (!d.ok) { setBanner('bad', esc(d.error || '读取失败')); return; }
+  fill(d);
+}
+function collectRows(bodyId) {
+  const out = {};
+  for (const tr of el(bodyId).querySelectorAll('tr')) {
+    const id = tr.querySelector('[data-id]').value.trim();
+    const role = tr.querySelector('[data-role]').value.trim();
+    if (id !== '' && role !== '') out[id] = role;
+  }
+  return out;
+}
+async function save() {
+  if (!(await ensureSudo())) return;
+  setMsg('', '保存中…');
+  const body = {
+    allowUsers: el('users').value.split('\n'),
+    allowGroups: el('groups').value.split('\n'),
+    botQq: el('botQq').value.trim() || 0,
+    identityEnabled: el('identityEnabled').checked,
+    defaultRole: el('defaultRole').value,
+    groupRole: el('groupRole').value,
+    map: collectRows('mapRows'),
+    groupRoles: collectRows('groupRows'),
+  };
+  const r = await api('/api/identity/save', body);
+  if (!r.ok) { setMsg('err', `保存失败：${r.error || '未知错误'}${(r.warnings || []).length ? ' ｜ ' + r.warnings.join('；') : ''}`); return; }
+  const warn = (r.warnings || []).length ? ` ｜ 提示：${r.warnings.join('；')}` : '';
+  setMsg('ok', `已保存：${(r.changed || []).join(', ')}。备份：${r.backup}。${r.note}${warn}`);
+  await load();
+}
+load();
+</script>
+</body>
+</html>

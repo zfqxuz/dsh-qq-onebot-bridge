@@ -66,7 +66,7 @@
 </style>
 </head>
 <body>
-<div style="padding:6px 16px;background:#1c1f26;border-bottom:1px solid #2a2f39;font-size:13px"><a id="navStatus" href="/status" style="color:#9ecbff;text-decoration:none;margin-right:14px">状态台</a><a id="navPlugins" href="/plugins" style="color:#9ecbff;text-decoration:none">插件与密钥</a></div>
+<div style="padding:6px 16px;background:#1c1f26;border-bottom:1px solid #2a2f39;font-size:13px"><a id="navStatus" href="/status" style="color:#9ecbff;text-decoration:none;margin-right:14px">状态台</a><a href="/identity" style="color:#9ecbff;text-decoration:none;margin-right:14px">机器人身份</a><a id="navPlugins" href="/plugins" style="color:#9ecbff;text-decoration:none">插件与密钥</a></div>
 <script>navStatus.href="/status";navPlugins.href="/plugins";</script>
 <header>
   <b>QQ 机器人权限控制台</b>
@@ -111,7 +111,7 @@
 
   <section id="subjects">
     <div class="bar">
-      <label class="fld">主体 <input id="subject" placeholder="user:2493922172 或 group:176628359" size="30"></label>
+      <label class="fld">主体 <input id="subject" placeholder="user:10001 或 group:123456" size="30"></label>
       <button class="btn" id="addSubject">打开</button>
       <span class="dirty" id="subjectsDirty" hidden>● 有未保存改动</span>
       <button class="btn primary" data-edit-start="subjects" disabled>编辑</button>

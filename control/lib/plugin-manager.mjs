@@ -6,7 +6,7 @@
  *
  * 事实依据（实测，别依赖 `dsh plugin` CLI —— 本机它因 corepack pnpm 缓存缺失直接报错）：
  *   1. profile bundles：~/.dsh/profiles/<profile>/package.json → dsh.profile.bundles
- *   2. 本地插件目录：~/.dsh/plugins/<name>（软链到 /home/zfq/dev/dsh-plugins/<name>）
+ *   2. 本地插件目录：<DSH_HOME>/plugins/<name>（软链到本地插件源码目录，见 control/lib/paths.mjs）
  *   3. 真正生效的配置：~/.dsh/cordis.patch.yml 里每个 `- id: <id>` 块的 config
  *   4. 密钥：~/.dsh/.credentials.yaml、NapCat webui.json、插件 config 里的 sshKey（是路径）
  *
@@ -15,9 +15,10 @@
 import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
+import { dshHome, pluginSources, napcatConfigDir, dshInstallDir, profileName } from './paths.mjs'
 
-const DSH_HOME = process.env.DSH_HOME || '/home/zfq/.dsh'
-const PLUGINS_ROOT = process.env.QQ_PLUGIN_SOURCES || '/home/zfq/dev/dsh-plugins'
+const DSH_HOME = dshHome
+const PLUGINS_ROOT = pluginSources
 const SECRET_RE = /(token|secret|password|passwd|api_?key|private_?key)/i
 
 /**
@@ -53,6 +54,25 @@ const FIELD_CATALOG = {
   'session-reader': {
     allowedSessions: { label: '允许读取的会话', type: 'list' },
   },
+}
+
+/**
+ * "配了才可用"的插件：这些键全空 = 插件照常加载，但它的工具不注册（fail-soft）。
+ * 页面上标"未配置"，而不是报错 —— 出厂配置里没有这些值，也不该有默认值。
+ */
+const OPTIONAL_REQUIREMENTS = {
+  'ecs-n8n-gh': {
+    keys: ['ecsHost', 'sshKey'],
+    hint: '未配置：ECS / GitHub 工具不会注册（插件本身照常加载）。要用时在这里填主机与私钥路径。',
+  },
+}
+
+/** 返回该插件的"配置齐不齐"状态；非可选插件恒为已配置。 */
+export function configureState(id, keys = {}) {
+  const spec = OPTIONAL_REQUIREMENTS[id]
+  if (!spec) return { optional: false, configured: true, missing: [], hint: '' }
+  const missing = spec.keys.filter((k) => String(keys[k] ?? '').trim() === '')
+  return { optional: true, configured: missing.length === 0, missing, hint: spec.hint }
 }
 
 function run(command, args, timeout = 10000) {
@@ -174,9 +194,9 @@ export function listCandidates() {
 
 /** 插件列表（插件维度）：id/名称/来源/版本/启用/断链/可配置字段数。 */
 export async function listPlugins() {
-  const profileDir = join(DSH_HOME, 'profiles', 'web')
+  const profileDir = join(DSH_HOME, 'profiles', profileName)
   const profilePkg = readJsonSafe(join(profileDir, 'package.json')) ?? {}
-  const dshNodeModules = '/home/zfq/node24/lib/node_modules/@deepseek-ai/dsh/node_modules'
+  const dshNodeModules = join(dshInstallDir(), 'node_modules')
   const bundles = (profilePkg?.dsh?.profile?.bundles ?? []).map((name) => {
     const inProfile = existsSync(join(profileDir, 'node_modules', name))
     return { name, kind: 'bundle', source: inProfile ? 'profile 依赖' : 'dsh 内置', version: readJsonSafe(join(inProfile ? join(profileDir, 'node_modules') : dshNodeModules, name, 'package.json'))?.version ?? '' }
@@ -196,6 +216,7 @@ export async function listPlugins() {
       try { broken = lstatSync(linkPath).isSymbolicLink() && !existsSync(linkPath) } catch { broken = true }
       version = readJsonSafe(join(linkPath, 'package.json'))?.version ?? ''
     }
+    const state = configureState(b.id, b.keys)
     plugins.push({
       id: b.id,
       kind: 'local',
@@ -206,6 +227,9 @@ export async function listPlugins() {
       broken,
       fieldCount: Object.keys(b.keys).length,
       configFile: patchFile(),
+      optional: state.optional,
+      configured: state.configured,
+      configHint: state.hint,
     })
   }
   for (const b of bundles) {
@@ -221,7 +245,7 @@ export async function listPlugins() {
     secrets: {
       credentialsFile,
       credentialKeys: [...credentialsText.matchAll(/^\s{2}([A-Z0-9_]+):/gm)].map((m) => m[1]),
-      napcatWebuiToken: Boolean(readJsonSafe('/home/zfq/dshbot/qq/napcat-config/webui.json')?.token),
+      napcatWebuiToken: Boolean(readJsonSafe(join(napcatConfigDir, 'webui.json'))?.token),
     },
     roots: { dshHome: DSH_HOME, pluginSources: PLUGINS_ROOT },
   }
@@ -231,11 +255,16 @@ export async function listPlugins() {
 export function pluginDetail(id) {
   const block = parseBlocks(readPatch()).find((b) => b.id === id)
   if (!block) return { ok: false, error: `没有这个插件：${id}` }
+  const state = configureState(id, block.keys)
   return {
     ok: true,
     id,
     name: block.name,
     enabled: !block.disabled,
+    optional: state.optional,
+    configured: state.configured,
+    missingKeys: state.missing,
+    configHint: state.hint,
     fields: describeFields(id, block.keys),
     redacted: redactText(block.blockText),
     configFile: patchFile(),
@@ -258,7 +287,31 @@ export function savePluginConfig({ id, values = {} }) {
     const re = new RegExp(`^(\\s{6,})${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*(.*)$`)
     let hit = -1
     for (let i = block.startLine + 1; i <= block.endLine && i < lines.length; i++) if (re.test(lines[i])) { hit = i; break }
-    if (hit === -1) { skipped.push(`${key}(不存在)`); continue }
+    if (hit === -1) {
+      // 键还不存在于这个插件块 → 补进去（只新增，不改任何已有值）。
+      // 落点：块内 `config:` 段里最后一个已有键之后；没有 config 段就先建一个。
+      const cfgLine = (() => {
+        for (let i = block.startLine + 1; i <= block.endLine && i < lines.length; i++) {
+          if (/^\s*config:\s*$/.test(lines[i])) return i
+        }
+        return -1
+      })()
+      if (cfgLine === -1) {
+        const at = block.startLine + 1
+        const indent = '      '
+        lines.splice(at, 0, `${indent}config:`, `${indent}  ${key}: ${renderValue(value)}`)
+        block.endLine += 2
+      } else {
+        let insertAt = cfgLine + 1
+        for (let i = cfgLine + 1; i <= block.endLine && i < lines.length; i++) {
+          if (/^\s{6,}[\w.-]+:\s*/.test(lines[i])) insertAt = i + 1
+        }
+        lines.splice(insertAt, 0, `        ${key}: ${renderValue(value)}`)
+        block.endLine += 1
+      }
+      changed.push(`${key}(新增)`)
+      continue
+    }
     lines[hit] = lines[hit].replace(re, `$1${key}: ${renderValue(value)}`)
     changed.push(key)
   }
@@ -298,7 +351,7 @@ export function setPluginEnabled({ id, enabled }) {
 /** 安装：把插件源目录软链进 ~/.dsh/plugins，并在 home patch 追加一个 insert 块。 */
 export function installPlugin({ source, enable = true }) {
   const src = String(source ?? '').trim()
-  const allowedRoots = String(process.env.QQ_PLUGIN_ALLOWED_ROOTS || '/home/zfq:/opt:/srv').split(':').filter(Boolean)
+  const allowedRoots = String(process.env.QQ_PLUGIN_ALLOWED_ROOTS || '/opt:/srv:/app/plugins').split(':').filter(Boolean)
   if (!src || !allowedRoots.some((root) => src === root || src.startsWith(`${root}/`))) {
     return { ok: false, error: `只允许从这些根目录安装：${allowedRoots.join('、')}（可用 QQ_PLUGIN_ALLOWED_ROOTS 扩展）` }
   }

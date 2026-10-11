@@ -224,8 +224,8 @@ check('收到入群请求事件', events.request.length === 1 && events.request[
 // ===== toOneBotFileSource：NapCat 的 file 字段要 URL/file://，裸绝对路径会"识别URL失败" =====
 {
   const cases = [
-    ['/home/zfq/qqbot/media/images/a.png', 'file:///home/zfq/qqbot/media/images/a.png'],
-    ['file:///home/zfq/a.png', 'file:///home/zfq/a.png'],
+    ['/data/qqbot/media/images/a.png', 'file:///data/qqbot/media/images/a.png'],
+    ['file:///root/a.png', 'file:///root/a.png'],
     ['http://example.com/a.png', 'http://example.com/a.png'],
     ['https://example.com/a.png', 'https://example.com/a.png'],
     ['base64://AAAA', 'base64://AAAA'],

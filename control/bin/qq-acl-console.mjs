@@ -13,13 +13,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createAclToken, startAclConsole } from '../lib/acl-console.mjs'
+import { resolvePath } from '../lib/paths.mjs'
 
 const args = process.argv.slice(2)
 const argOf = (name, fallback = '') => {
   const i = args.indexOf(`--${name}`)
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : fallback
 }
-const dataRoot = argOf('data-root', process.env.QQ_DATA_ROOT || '/home/zfq/qqbot')
+const dataRoot = argOf('data-root', resolvePath('QQ_DATA_ROOT', ['/data/qqbot', join(process.env.HOME || homedir(), 'qqbot')]))
 const stateFile = join(dataRoot, 'state', 'acl-console.json')
 const dbFile = argOf('file', join(dataRoot, 'config', 'acl.db'))
 const port = Number(argOf('port', '0')) || 8798
