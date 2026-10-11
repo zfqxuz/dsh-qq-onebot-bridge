@@ -1,5 +1,23 @@
 # 更新日志 / Changelog
 ## v0.7 系列 —— 可迁移 / 配置归用户 / Portable
+### v0.7.1（2026-10-12）— 系统配置：gh / git 身份 / DSH 工作区都归控制台
+
+#### 新增
+
+- **控制台「系统配置」页（`/system`）**：gh 凭据、git 身份（user.name/user.email）、DSH 工作区
+  三件事都能在页面上改。**镜像里只有 gh 二进制、不带任何凭据**；填了才渲染，属于"用户自己的配置"。
+  写操作要 sudo 校验，改前备份、改后写审计（审计不含密钥）。
+- **启动渲染器 `control/bin/qq-system-config.mjs`**：容器每次启动按 `<数据根>/config/system.json`
+  渲染出 `~/.gitconfig`、`~/.config/gh/hosts.yml`（0600）与 git 凭据助手
+  （`!gh auth git-credential`，于是容器里 `git clone/push` 私有仓库不用再输密码）。
+  沿用首启播种的老规矩：**只补缺，不覆盖**；`GIT_CONFIG_GLOBAL`/`GH_CONFIG_DIR` 由外部挂载时自动跳过。
+- **工作区绑定**：`system.json` 里配的工作区若在容器内可达且**实测可写**就采用（父目录可写时自动创建），
+  只读/不可达一律不采用，并在页面上说明原因。可写范围由部署的 `QQ_WORKSPACE_ROOT` 决定。
+- **渲染报告**：`<数据根>/state/system-config.json` 记录最近一次真实渲染结果（动作 + 掩码），
+  控制台据此显示"当前到底用了哪条路径、gh 到底有没有生效"，而不是靠猜。
+- 单测 `test/system-config-unit.mjs`（28 条）：只补缺、token 不进报告/审计、缺账号名不落盘、
+  外部挂载跳过、工作区可写判定、路径范围校验。
+
 ### v0.7.0（2026-10-12）— 配置全部归用户、镜像只换代码 / Config stays yours
 
 #### 新增

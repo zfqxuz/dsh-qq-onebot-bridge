@@ -472,6 +472,32 @@ npm run control            # 或 node control/bin/qq-control.mjs --open
 
 > 以后若想做真正的托盘/桌面程序，直接包一层 Electron/Tauri 复用同一套 HTTP API 即可，逻辑无需重写。
 
+## 系统配置：gh / git 身份 / DSH 工作区（v0.7.1）
+
+**镜像里只有 gh 的二进制，没有任何凭据**；这些都属于「用户自己的系统配置」，在控制台 `/system` 页里配
+（Docker 部署是 http://127.0.0.1:8798/system ），落盘在数据根，换镜像不丢。
+
+| 配置项 | 渲染成什么 | 生效时机 |
+|---|---|---|
+| GitHub token + 账号 | `<HOME>/.config/gh/hosts.yml`（0600），并写好 git 凭据助手 `!gh auth git-credential` | 保存即生效（容器内读同一份文件） |
+| git 用户名 / 邮箱 | `<HOME>/.gitconfig` 的 `[user]` | 保存即生效 |
+| DSH 工作区 | `<数据根>/state/workspace.effective` → entrypoint 据此 `cd` | 重启 harness 后生效 |
+
+约束（有单测守着，见 `test/system-config-unit.mjs`）：
+
+- **只补缺，不覆盖**：git 键已存在、该 host 已有 token 一律保留；你手改过的值不会被镜像或重启冲掉
+- **工作区必须可写**：只读或不可达的目录**不会被采用**（宁可继续用旧的，也不给你一个写不进去的工作区）；
+  可写范围 = 部署时的 `QQ_WORKSPACE_ROOT`，范围内的目录保存后重启即切换，父目录可写时会自动创建
+- **外部挂载优先**：`GIT_CONFIG_GLOBAL` / `GH_CONFIG_DIR` 由环境显式指定时（开发机挂宿主配置）自动跳过，不动宿主文件
+- **token 只写不读**：接口与报告里只有掩码（`ghp_…abcd（40 字符）`），审计日志也不含原文
+
+命令行也能跑（容器启动时 entrypoint 就是这么调的）：
+
+```sh
+node control/bin/qq-system-config.mjs            # 渲染一次并写报告
+node control/bin/qq-system-config.mjs --dry-run  # 只报告不动文件
+```
+
 ## 隐私与脱敏
 
 出问题排查往往要把日志发给别人，所以本插件对"数据会去哪"有明确约定：
