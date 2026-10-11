@@ -28,6 +28,13 @@ export function statusDefaults(overrides = {}) {
     napcatWebuiPort: Number(process.env.QQ_NAPCAT_WEBUI_PORT || 6099),
     bridgePort: Number(process.env.QQ_BRIDGE_PORT || 6700),
     dshPort: Number(process.env.QQ_DSH_PORT || 3080),
+    // 探活目标主机：host 网络下都是 127.0.0.1；compose 网络（Windows/Mac 的 Docker Desktop
+    // 默认就是这种）下要填服务名，否则端口探测永远显示不可用。
+    napcatHost: process.env.QQ_NAPCAT_HOST || '127.0.0.1',
+    bridgeHost: process.env.QQ_BRIDGE_HOST || '127.0.0.1',
+    dshHost: process.env.QQ_DSH_HOST || '127.0.0.1',
+    // WebUI 链接是给**浏览器**点的，所以它用宿主侧地址（发布端口 = 127.0.0.1）
+    webuiUrlHost: process.env.QQ_NAPCAT_WEBUI_URL_HOST || '127.0.0.1',
     restartScript: resolveRestartScript,
     ...overrides,
   }
@@ -88,10 +95,10 @@ export function httpProbe({ url, timeout = 1500, expect = (code) => code > 0 && 
 }
 
 /** NapCat WebUI 地址：读 webui.json 的 token 拼上（前端会自己算 hash 登录，见 bridge 侧注释）。 */
-export function napcatWebUiUrl({ napcatConfigDir = statusDefaults().napcatConfigDir, napcatWebuiPort = statusDefaults().napcatWebuiPort } = {}) {
+export function napcatWebUiUrl({ napcatConfigDir = statusDefaults().napcatConfigDir, napcatWebuiPort = statusDefaults().napcatWebuiPort, host = statusDefaults().webuiUrlHost } = {}) {
   let token = ''
   try { token = String(readJsonSafe(join(napcatConfigDir, 'webui.json'))?.token ?? '') } catch { /* 读不到就退回裸地址 */ }
-  const base = `http://127.0.0.1:${napcatWebuiPort}/webui/`
+  const base = `http://${host}:${napcatWebuiPort}/webui/`
   return token === '' ? base : `${base}?token=${encodeURIComponent(token)}`
 }
 
@@ -161,8 +168,8 @@ export async function collectStatus(overrides = {}) {
     .filter((line) => line.includes('proxy check'))
     .slice(-5)
   const [napcatWebui, bridgePort, docker, versions] = await Promise.all([
-    tcpProbe(opts.napcatWebuiPort),
-    tcpProbe(opts.bridgePort),
+    tcpProbe(opts.napcatWebuiPort, { host: opts.napcatHost }),
+    tcpProbe(opts.bridgePort, { host: opts.bridgeHost }),
     collectDocker(),
     collectVersions(),
   ])
@@ -181,14 +188,14 @@ export async function collectStatus(overrides = {}) {
       napcatWebui: opts.napcatWebuiPort,
       // 三级证据：进程（由 runtime.json 的 pid + 存活判断）→ 端口 → 真实可用（发一次请求）
       dshProcess: Boolean(runtime?.pid),
-      dshPortOpen: await tcpProbe(opts.dshPort),
-      dshUsable: (await httpProbe({ url: `http://127.0.0.1:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 })).ok,
-      dshProbe: await httpProbe({ url: `http://127.0.0.1:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 }),
+      dshPortOpen: await tcpProbe(opts.dshPort, { host: opts.dshHost }),
+      dshUsable: (await httpProbe({ url: `http://${opts.dshHost}:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 })).ok,
+      dshProbe: await httpProbe({ url: `http://${opts.dshHost}:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 }),
       bridgePortOpen: bridgePort,
       bridgeUsable: bridgePort && runtime !== null,
       napcatWebuiPortOpen: napcatWebui,
-      napcatUsable: (await httpProbe({ url: `http://127.0.0.1:${opts.napcatWebuiPort}/`, expect: (c) => c >= 200 && c < 400 })).ok,
-      napcatProbe: await httpProbe({ url: `http://127.0.0.1:${opts.napcatWebuiPort}/`, expect: (c) => c >= 200 && c < 400 }),
+      napcatUsable: (await httpProbe({ url: `http://${opts.napcatHost}:${opts.napcatWebuiPort}/`, expect: (c) => c >= 200 && c < 400 })).ok,
+      napcatProbe: await httpProbe({ url: `http://${opts.napcatHost}:${opts.napcatWebuiPort}/`, expect: (c) => c >= 200 && c < 400 }),
     },
     bridge: runtime === null ? { available: false } : {
       available: true,
