@@ -15,19 +15,28 @@ import { existsSync, mkdirSync, readFileSync, statfsSync, statSync } from 'node:
 import { connect } from 'node:net'
 import * as nodeHttp from 'node:http'
 const require_http = () => nodeHttp
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { dataRoot as resolveDataRoot, napcatConfigDir as resolveNapcatConfigDir, restartScript as resolveRestartScript, dshVersion } from './paths.mjs'
+import { DEFAULT_DSH_PORT, dshPortCandidates } from './dsh-port.mjs'
 
 const DATA_ROOT = resolveDataRoot
+const CONFIG_FILE = process.env.QQ_CONTROL_CONFIG || join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'qq-control.json')
 
 export function statusDefaults(overrides = {}) {
+  // 宿主端口不写死：排出候选（env → 配置 → 运行中的进程 → 登记的地址 → 日志 → 默认值），
+  // 真正"选哪个"留给 collectStatus 探活决定（见 dsh-port.mjs 的注释）。
+  const candidates = dshPortCandidates({ env: process.env, dataRoot: DATA_ROOT, configFile: CONFIG_FILE })
+  const fallback = candidates[0] ?? { port: DEFAULT_DSH_PORT, source: '默认值' }
   return {
     dataRoot: DATA_ROOT,
     napcatContainer: process.env.QQ_NAPCAT_CONTAINER || 'napcat',
     napcatConfigDir: resolveNapcatConfigDir,
     napcatWebuiPort: Number(process.env.QQ_NAPCAT_WEBUI_PORT || 6099),
     bridgePort: Number(process.env.QQ_BRIDGE_PORT || 6700),
-    dshPort: Number(process.env.QQ_DSH_PORT || 3080),
+    dshPort: fallback.port,
+    dshPortSource: fallback.source,
+    dshPortCandidates: candidates,
     // 探活目标主机：host 网络下都是 127.0.0.1；compose 网络（Windows/Mac 的 Docker Desktop
     // 默认就是这种）下要填服务名，否则端口探测永远显示不可用。
     napcatHost: process.env.QQ_NAPCAT_HOST || '127.0.0.1',
@@ -158,6 +167,37 @@ async function collectVersions() {
   return { node: process.version, dsh, bridge, napcatImage: ok ? stdout.trim() : '' }
 }
 
+/**
+ * 按候选顺序探活宿主端口：第一个真的响应的（HTTP 200/401）就用它。
+ * 全都无响应时退一步用"端口通但没响应"的那个，再退回第一个候选 ——
+ * 这样页面至少能说清"我在探哪个端口、这个端口是从哪来的"，
+ * 而不是替用户记死一个 3080 然后干说一句不可用。
+ */
+export async function resolveDshEndpoint(opts) {
+  const candidates = Array.isArray(opts.dshPortCandidates) && opts.dshPortCandidates.length > 0
+    ? opts.dshPortCandidates
+    : [{ port: opts.dshPort, source: opts.dshPortSource || '默认值' }]
+  const host = opts.dshHost
+  const tried = []
+  let firstOpen = null
+  for (const cand of candidates.slice(0, 5)) {
+    tried.push(cand.port)
+    const probe = await httpProbe({ url: `http://${host}:${cand.port}/`, expect: (c) => c === 200 || c === 401 })
+    if (probe.ok) return { port: cand.port, source: cand.source, open: true, usable: true, probe, tried }
+    if (!firstOpen && await tcpProbe(cand.port, { host })) {
+      firstOpen = { port: cand.port, source: cand.source, open: true, usable: false, probe, tried }
+    }
+  }
+  return firstOpen ?? {
+    port: candidates[0].port,
+    source: candidates[0].source,
+    open: false,
+    usable: false,
+    probe: { ok: false, code: 0, ms: 0 },
+    tried,
+  }
+}
+
 /** 汇总状态：系统 / 容器 / 桥接 / 代理 / 事故 / 版本。任何一项失败都不影响其它项。 */
 export async function collectStatus(overrides = {}) {
   const opts = statusDefaults(overrides)
@@ -174,6 +214,7 @@ export async function collectStatus(overrides = {}) {
     collectVersions(),
   ])
   const qrFile = join(dataRoot, 'state', 'napcat-qrcode.png')
+  const dshEndpoint = await resolveDshEndpoint(opts)
   const qr = existsSync(qrFile)
     ? { cached: true, ageSeconds: Math.round((Date.now() - statSync(qrFile).mtimeMs) / 1000), bytes: statSync(qrFile).size }
     : { cached: false }
@@ -183,14 +224,18 @@ export async function collectStatus(overrides = {}) {
     system: { ...collectSystem(), ...versions },
     docker,
     ports: {
-      dsh: opts.dshPort,
+      dsh: dshEndpoint.port,
+      // 这个端口是从哪来的（环境变量 / 运行中的进程 / 日志 / 默认值…），排查时最有用的一条
+      dshSource: dshEndpoint.source,
+      dshCandidates: (opts.dshPortCandidates ?? []).map((c) => ({ port: c.port, source: c.source })),
+      dshProbed: dshEndpoint.tried,
       bridge: opts.bridgePort,
       napcatWebui: opts.napcatWebuiPort,
       // 三级证据：进程（由 runtime.json 的 pid + 存活判断）→ 端口 → 真实可用（发一次请求）
       dshProcess: Boolean(runtime?.pid),
-      dshPortOpen: await tcpProbe(opts.dshPort, { host: opts.dshHost }),
-      dshUsable: (await httpProbe({ url: `http://${opts.dshHost}:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 })).ok,
-      dshProbe: await httpProbe({ url: `http://${opts.dshHost}:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 }),
+      dshPortOpen: dshEndpoint.open,
+      dshUsable: dshEndpoint.usable,
+      dshProbe: dshEndpoint.probe,
       bridgePortOpen: bridgePort,
       bridgeUsable: bridgePort && runtime !== null,
       napcatWebuiPortOpen: napcatWebui,

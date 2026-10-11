@@ -143,7 +143,7 @@ async function refresh() {
   el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
 
   const tiles = [
-    ['DSH 宿主', p.dshUsable, p.dshUsable ? '可用' : '不可用', `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`],
+    ['DSH 宿主', p.dshUsable, p.dshUsable ? '可用' : '不可用', `端口 ${p.dsh}（${p.dshSource || '来源未知'}） · HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`],
     ['QQ 桥接', p.bridgeUsable, p.bridgeUsable ? '可用' : '不可用', `pid ${d.bridge.pid ?? '-'} · 会话 ${d.bridge.sessionCount ?? '-'}`],
     ['NapCat', p.napcatUsable, p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`],
     ['代理', d.proxy.healthy !== false, d.proxy.mode === 'proxy' ? '走代理' : '直连', `${d.proxy.code || '-'} · ${d.proxy.proxy || '未配置'}`],
@@ -163,7 +163,7 @@ async function refresh() {
     + tr('开机时长', dur(d.system.uptimeSeconds)));
   setText('versions', `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`);
 
-  setHtml('ports', tr('DSH WebUI ' + p.dsh, dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`))
+  setHtml('ports', tr('DSH WebUI ' + p.dsh, dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms · 端口来源：${p.dshSource || '未知'}${(p.dshProbed || []).length > 1 ? '（依次探过 ' + p.dshProbed.join('/') + '）' : ''}`))
     + tr('QQ 桥接 6700', dot(p.bridgeUsable ? 'ok' : (p.bridgePortOpen ? 'warn' : 'bad'), p.bridgeUsable ? '可用' : '不可用', p.bridgePortOpen ? '端口在听' : '端口未监听'))
     + tr('NapCat WebUI 6099', dot(p.napcatUsable ? 'ok' : (p.napcatWebuiPortOpen ? 'warn' : 'bad'), p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`)));
 

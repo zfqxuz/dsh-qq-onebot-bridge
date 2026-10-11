@@ -459,7 +459,7 @@ npm run control            # 或 node control/bin/qq-control.mjs --open
 
 | 能力 | 说明 |
 |---|---|
-| 端口总览 | 控制台 8799 / 宿主 3080 / OneBot 6700 / NapCat 6099 / GPT-SoVITS 9880 的监听状态、占用 PID 与进程名；6700 的连接数即"机器人在线" |
+| 端口总览 | 控制台 8799 / 宿主（端口**自动识别**正在跑的 dsh，默认 3080） / OneBot 6700 / NapCat 6099 / GPT-SoVITS 9880 的监听状态、占用 PID 与进程名；6700 的连接数即"机器人在线" |
 | 启停 | 启动/停止/重启宿主（自动带 `--no-open`，日志重定向到 `qq-host-out.log`/`qq-host-err.log`）、启动/停止 NapCat 与 QQ、启动/停止 GPT-SoVITS、一键全停 |
 | 启动预检 | 起宿主前检查 3080/6700，被占则直接报「端口←进程#PID」，而不是静默失败 |
 | 释放端口 | 对占用受管端口的进程一键 `taskkill /T /F`（护栏：只允许受管端口占用者与已知机器人进程，绝不误杀无关 PID） |

@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createAclToken, startAclConsole } from '../lib/acl-console.mjs'
 import { resolvePath } from '../lib/paths.mjs'
+import { statusDefaults } from '../lib/status-page.mjs'
 
 const args = process.argv.slice(2)
 const argOf = (name, fallback = '') => {
@@ -42,6 +43,12 @@ console.log('权限控制台已启动：')
 console.log(`  ${console_.url}`)
 console.log(`  库文件：${dbFile}`)
 console.log('  提示：只绑 127.0.0.1，URL 里的 token 就是凭证，别外传。')
+// 宿主端口是"找"出来的、不是记死的：把探活目标和它的来源打出来（来源可能是
+// 环境变量 / qq-control.json / 正在跑的 dsh 进程 / 日志 / 默认值），排查时一眼看到。
+const dshOpts = statusDefaults({ dataRoot })
+console.log(`  宿主探活目标：${dshOpts.dshHost}:${dshOpts.dshPort}（来源：${dshOpts.dshPortSource}）`)
+const dshAlt = (dshOpts.dshPortCandidates ?? []).slice(1, 4).map((c) => `${c.port}（${c.source}）`)
+if (dshAlt.length > 0) console.log(`  备选端口：${dshAlt.join('、')}`)
 
 if (args.includes('--open')) {
   const opener = process.platform === 'darwin' ? 'open' : (process.platform === 'win32' ? 'cmd' : 'xdg-open')
