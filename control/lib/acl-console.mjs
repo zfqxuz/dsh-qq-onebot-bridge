@@ -17,6 +17,7 @@ import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
 import { collectStatus, fetchQrImage, napcatWebUiUrl } from './status-page.mjs'
+import { COOKIE_NAME, createLoginThrottle, createSessionStore, openUserStore, parseCookies, sessionCookie } from './auth.mjs'
 import { installPlugin, keyFingerprint, listPlugins, pluginDetail, savePluginConfig, setPluginEnabled, sshTest, uninstallPlugin } from './plugin-manager.mjs'
 
 const MAX_BODY = 256 * 1024
@@ -257,6 +258,39 @@ export function applyAclAction(store, body, { actor = 'console' } = {}) {
  * 起服务。`ui` 是页面 HTML 字符串；`store` 可注入（测试用临时库）。
  * 返回 { server, port, url, token, close() }。
  */
+
+const LOGIN_PAGE = `<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>控制台登录</title><style>
+  :root{color-scheme:dark}body{margin:0;font:14px/1.5 system-ui,-apple-system,"Noto Sans CJK SC",sans-serif;background:#0f1216;color:#e8ecf1;display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .box{background:#171b21;border:1px solid #28303b;border-radius:12px;padding:26px 28px;width:min(360px,92vw)}
+  h1{font-size:16px;margin:0 0 4px}.muted{color:#8a94a3;font-size:12px;margin-bottom:16px}
+  label{display:block;font-size:12px;color:#8a94a3;margin:10px 0 4px}
+  input{width:100%;box-sizing:border-box;background:#0f1216;color:#e8ecf1;border:1px solid #28303b;border-radius:6px;padding:8px 10px}
+  button{margin-top:16px;width:100%;background:#3b82f6;color:#fff;border:0;border-radius:6px;padding:9px;cursor:pointer;font-size:14px}
+  .err{color:#f87171;font-size:12px;margin-top:10px;min-height:16px}
+</style></head><body><div class="box">
+  <h1 id="t">控制台登录</h1><div class="muted" id="sub">本机控制台，只绑 127.0.0.1</div>
+  <form id="f">
+    <label>用户名</label><input id="u" autocomplete="username" value="admin">
+    <label>密码</label><input id="p" type="password" autocomplete="current-password">
+    <button id="b">登录</button>
+  </form>
+  <div class="err" id="e"></div>
+  <div class="muted" style="margin-top:14px">首次使用会直接创建管理员账号；密码用 scrypt 哈希存本机文件。</div>
+</div><script>
+let setup = false;
+fetch('/api/session').then(r=>r.json()).then(d=>{ setup = d.setupRequired === true; if(setup){ t.textContent='首次使用：设置管理员密码'; sub.textContent='没有账号，先创建管理员'; b.textContent='创建并登录'; } }).catch(()=>{});
+f.onsubmit = async (ev) => {
+  ev.preventDefault(); e.textContent='';
+  const url = setup ? '/api/setup' : '/api/login';
+  const r = await fetch(url, { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ user: u.value.trim(), password: p.value }) });
+  const d = await r.json().catch(()=>({}));
+  if (d.ok) { location.href = new URLSearchParams(location.search).get('next') || '/status'; return; }
+  e.textContent = d.error || '登录失败'; if (d.setupRequired) location.reload();
+};
+</script></body></html>`
+
 export async function startAclConsole({ file, token = createAclToken(), ui = '', port = 0, host = '127.0.0.1', logger = console, corporaRoot = '', dataRoot = '' } = {}) {
   // 语料根：显式给就用，否则按数据根推（<dataRoot>/config/corpora）
   const corpusRoot = corporaRoot !== '' ? corporaRoot : (dataRoot === '' ? '' : join(dataRoot, 'config', 'corpora'))
@@ -268,6 +302,11 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
   const statusHtml = existsSync(new URL('../status-ui.html', import.meta.url))
     ? readFileSync(new URL('../status-ui.html', import.meta.url), 'utf8')
     : '<!doctype html><meta charset="utf-8"><h1>QQ 机器人状态台</h1><p>缺少 control/status-ui.html</p>'
+
+  // [登录改造] 用户表 + 会话表 + 登录限速（控制台自己的状态，跟 DSH 无关）
+  const users = openUserStore(dataRoot || process.cwd())
+  const sessions = createSessionStore()
+  const throttle = createLoginThrottle()
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${host}`)
@@ -293,8 +332,72 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
       res.end(statusHtml)
       return
     }
-    const provided = String(url.searchParams.get('token') ?? req.headers['x-acl-token'] ?? '')
-    if (provided !== token) return json(res, 401, { ok: false, error: 'token 不对' })
+    // ---- [登录改造] 登录页与登录/登出/会话接口（不需要已登录）----
+    if (url.pathname === '/login') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      return res.end(LOGIN_PAGE)
+    }
+    const remote = String(req.socket?.remoteAddress ?? '')
+    const isLocal = remote === '' || remote === '::1' || remote.startsWith('127.') || remote.startsWith('::ffff:127.')
+    const cookies = parseCookies(req.headers.cookie)
+    const sid = cookies[COOKIE_NAME] ?? ''
+    const session = sessions.get(sid)
+    if (req.method === 'GET' && url.pathname === '/api/session') {
+      return json(res, 200, {
+        ok: true,
+        setupRequired: !users.hasUsers(),
+        user: session?.user ?? null,
+        sudo: sessions.hasSudo(sid),
+        users: users.names(),
+      })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/setup') {
+      if (!isLocal) return json(res, 403, { ok: false, error: '只允许本机请求' })
+      if (users.hasUsers()) return json(res, 400, { ok: false, error: '已经有账号了，请直接登录', setupRequired: false })
+      const body = (await readBody(req)) ?? {}
+      const result = users.setPassword(String(body.user ?? 'admin'), String(body.password ?? ''))
+      if (!result.ok) return json(res, 400, result)
+      const newSid = sessions.create(result.user)
+      res.setHeader('set-cookie', sessionCookie(newSid))
+      return json(res, 200, { ok: true, user: result.user })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/login') {
+      if (!isLocal) return json(res, 403, { ok: false, error: '只允许本机请求' })
+      const limit = throttle.check(remote)
+      if (!limit.ok) return json(res, 429, { ok: false, error: `失败次数过多，请 ${limit.retryAfterSeconds} 秒后再试` })
+      const body = (await readBody(req)) ?? {}
+      const name = String(body.user ?? '').trim()
+      const okPassword = users.verify(name, String(body.password ?? ''))
+      if (!okPassword) {
+        throttle.fail(remote)
+        return json(res, 401, { ok: false, error: users.hasUsers() ? '用户名或密码不对' : '还没有账号，请先创建管理员', setupRequired: !users.hasUsers() })
+      }
+      throttle.ok(remote)
+      const newSid = sessions.create(name)
+      res.setHeader('set-cookie', sessionCookie(newSid))
+      return json(res, 200, { ok: true, user: name })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/logout') {
+      sessions.destroy(sid)
+      res.setHeader('set-cookie', sessionCookie('', { clear: true }))
+      return json(res, 200, { ok: true })
+    }
+    if (req.method === 'POST' && url.pathname === '/api/reauth') {
+      if (!session) return json(res, 401, { ok: false, error: '先登录' })
+      const body = (await readBody(req)) ?? {}
+      if (!users.verify(session.user, String(body.password ?? ''))) {
+        throttle.fail(remote)
+        return json(res, 401, { ok: false, error: '密码不对' })
+      }
+      sessions.grantSudo(sid)
+      return json(res, 200, { ok: true, sudo: true, note: '5 分钟内可执行危险操作' })
+    }
+
+    // 会话鉴权（保留旧 token 作为测试后门：只有显式传对才认）
+    const legacyToken = String(url.searchParams.get('token') ?? req.headers['x-acl-token'] ?? '')
+    if (!session && legacyToken !== token) {
+      return json(res, 401, { ok: false, error: '未登录', setupRequired: !users.hasUsers() })
+    }
 
     // ---- [阶段 0] 状态台 / 扫码接口（只读；重启宿主是唯一的写动作，且要 token）----
     if (req.method === 'GET' && url.pathname === '/api/plugins') {
@@ -356,6 +459,7 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
     }
     if (req.method === 'POST' && url.pathname === '/api/system/restart-host') {
       const script = process.env.QQ_RESTART_SCRIPT || '/home/zfq/dev/dshbot-ops/scripts/restart-dsh.sh'
+      if (!sessions.hasSudo(sid)) return json(res, 403, { ok: false, error: '危险操作需要 sudo：先 POST /api/reauth 校验密码（5 分钟有效）' })
       if (!existsSync(script)) return json(res, 500, { ok: false, error: `找不到重启脚本：${script}` })
       const body = (await readBody(req)) ?? {}
       const delay = Math.max(0, Math.min(600, Number(body.delay ?? 15)))
@@ -414,7 +518,7 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
   return {
     server,
     port: actual,
-    url: `http://${host}:${actual}/?token=${token}`,
+    url: `http://${host}:${actual}/`,
     token,
     file,
     close: () => new Promise((resolve) => server.close(resolve)),

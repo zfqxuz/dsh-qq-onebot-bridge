@@ -13,6 +13,8 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statfsSync, statSync } from 'node:fs'
 import { connect } from 'node:net'
+import * as nodeHttp from 'node:http'
+const require_http = () => nodeHttp
 import { join } from 'node:path'
 
 const DATA_ROOT = process.env.QQ_DATA_ROOT || '/home/zfq/qqbot'
@@ -63,6 +65,24 @@ export function tcpProbe(port, { host = '127.0.0.1', timeout = 900 } = {}) {
     socket.once('connect', () => finish(true))
     socket.once('timeout', () => finish(false))
     socket.once('error', () => finish(false))
+  })
+}
+
+/**
+ * HTTP 可用性探测：比"端口在听"更强的证据。
+ * 判定标准按服务类型定：DSH WebUI 期望 200/401（401 也说明服务在正常应答），
+ * NapCat WebUI 期望 2xx/3xx；桥接 6700 是 WebSocket 服务，用 TCP + 收到的首行（Upgrade Required）判断。
+ */
+export function httpProbe({ url, timeout = 1500, expect = (code) => code > 0 && code < 500 } = {}) {
+  return new Promise((resolve) => {
+    const started = Date.now()
+    const req = require_http().get(url, { timeout }, (res) => {
+      res.resume()
+      const code = res.statusCode ?? 0
+      resolve({ ok: expect(code), code, ms: Date.now() - started })
+    })
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, code: 0, ms: Date.now() - started, reason: '超时' }) })
+    req.on('error', (error) => resolve({ ok: false, code: 0, ms: Date.now() - started, reason: String(error?.code ?? error?.message ?? error) }))
   })
 }
 
@@ -155,7 +175,21 @@ export async function collectStatus(overrides = {}) {
     at: Date.now(),
     system: { ...collectSystem(), ...versions },
     docker,
-    ports: { dsh: opts.dshPort, bridge: opts.bridgePort, napcatWebui: opts.napcatWebuiPort, dshUp: await tcpProbe(opts.dshPort), bridgeUp: bridgePort, napcatWebuiUp: napcatWebui },
+    ports: {
+      dsh: opts.dshPort,
+      bridge: opts.bridgePort,
+      napcatWebui: opts.napcatWebuiPort,
+      // 三级证据：进程（由 runtime.json 的 pid + 存活判断）→ 端口 → 真实可用（发一次请求）
+      dshProcess: Boolean(runtime?.pid),
+      dshPortOpen: await tcpProbe(opts.dshPort),
+      dshUsable: (await httpProbe({ url: `http://127.0.0.1:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 })).ok,
+      dshProbe: await httpProbe({ url: `http://127.0.0.1:${opts.dshPort}/`, expect: (c) => c === 200 || c === 401 }),
+      bridgePortOpen: bridgePort,
+      bridgeUsable: bridgePort && runtime !== null,
+      napcatWebuiPortOpen: napcatWebui,
+      napcatUsable: (await httpProbe({ url: `http://127.0.0.1:${opts.napcatWebuiPort}/`, expect: (c) => c >= 200 && c < 400 })).ok,
+      napcatProbe: await httpProbe({ url: `http://127.0.0.1:${opts.napcatWebuiPort}/`, expect: (c) => c >= 200 && c < 400 }),
+    },
     bridge: runtime === null ? { available: false } : {
       available: true,
       pid: runtime.pid,

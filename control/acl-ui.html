@@ -67,13 +67,12 @@
 </head>
 <body>
 <div style="padding:6px 16px;background:#1c1f26;border-bottom:1px solid #2a2f39;font-size:13px"><a id="navStatus" href="/status" style="color:#9ecbff;text-decoration:none;margin-right:14px">状态台</a><a id="navPlugins" href="/plugins" style="color:#9ecbff;text-decoration:none">插件与密钥</a></div>
-<script>const _t=new URLSearchParams(location.search).get("token")||"";navStatus.href="/status?token="+encodeURIComponent(_t);navPlugins.href="/plugins?token="+encodeURIComponent(_t);</script>
+<script>navStatus.href="/status";navPlugins.href="/plugins";</script>
 <header>
   <b>QQ 机器人权限控制台</b>
   <span class="pill" id="filePill">库：—</span>
   <span class="pill" id="stamp">—</span>
   <span class="spacer"></span>
-  <label class="fld">token <input id="token" size="20" placeholder="URL 里的 ?token="></label>
   <button class="btn" id="reload">刷新</button>
 </header>
 <nav id="tabs">
@@ -216,8 +215,7 @@
 'use strict'
 const $ = (id) => document.getElementById(id)
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
-let token = new URLSearchParams(location.search).get('token') || sessionStorage.getItem('aclToken') || ''
-$('token').value = token
+let token = ''
 let data = null
 let selectedRole = ''
 let capRole = ''
@@ -252,7 +250,7 @@ function busy(on) {
 async function api(path, options) {
   busy(true)
   try {
-    const url = path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
+    const url = path
     const res = await fetch(url, options)
     const body = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status))
@@ -306,8 +304,7 @@ function guard(what) {
 
 /* ── 渲染 ─────────────────────────────────────────────────────────── */
 async function load({ silent = false } = {}) {
-  token = $('token').value.trim() || token
-  sessionStorage.setItem('aclToken', token)
+  // [登录改造] token 已废弃：改用登录 Cookie（首次访问会跳登录页）
   try {
     data = await api('/api/acl')
   } catch (error) {
@@ -680,7 +677,7 @@ document.querySelectorAll('nav button').forEach((btn) => btn.onclick = () => {
   for (const s of document.querySelectorAll('section')) s.classList.toggle('on', s.id === btn.dataset.tab)
 })
 $('reload').onclick = async () => { if (!guard('刷新')) return; await load() }
-$('token').onchange = () => load()
+// [登录改造] token 输入框已移除
 $('roleSel').onchange = (e) => {
   if (!guard('切换角色')) { e.target.value = selectedRole; return }
   selectedRole = e.target.value

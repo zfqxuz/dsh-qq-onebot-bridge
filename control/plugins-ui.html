@@ -98,15 +98,15 @@
 </div></div>
 
 <script>
-const token = new URLSearchParams(location.search).get('token') || '';
-const q = () => 'token=' + encodeURIComponent(token);
+const q = () => '';
 const el = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-navStatus.href = '/status?' + q(); navAcl.href = '/?' + q();
+navStatus.href = '/status'; navAcl.href = '/';
 let current = null;
 
 async function api(path, body) {
-  const res = await fetch(path + (path.includes('?') ? '&' : '?') + q(), body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await fetch(path, body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/plugins'); return { ok: false, error: '未登录' }; }
   return res.json();
 }
 function closeModal(id) { el(id).classList.remove('open'); }

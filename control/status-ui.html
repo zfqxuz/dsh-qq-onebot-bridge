@@ -42,7 +42,7 @@
     <div class="muted" id="versions"></div>
   </section>
   <section class="card">
-    <h2>端口 / 容器</h2>
+    <h2>服务可用性 / 容器</h2>
     <div id="ports"></div>
     <pre id="docker"></pre>
   </section>
@@ -72,16 +72,15 @@
   </section>
 </main>
 <script>
-const token = new URLSearchParams(location.search).get('token') || '';
-const q = (s) => new URLSearchParams({ token }).toString() + (s || '');
+const q = (s) => (s || '').replace(/^&/, '');
 const el = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? '').replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
 function row(k, v, cls = '') { return `<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls}">${v}</span></div>`; }
 function pill(ok, text, warn = false) { return `<span class="pill ${ok ? 'up' : (warn ? 'warn' : 'down')}">${esc(text)}</span>`; }
 function bytes(n) { if (!n && n !== 0) return '?'; const u = ['B','K','M','G','T']; let i = 0; let v = n; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 1 : 0)}${u[i]}`; }
 function dur(s) { if (!s && s !== 0) return '?'; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}天${h}时` : (h ? `${h}时${m}分` : `${m}分${Math.floor(s % 60)}秒`); }
-el('aclLink').href = '/?token=' + encodeURIComponent(token);
-el('pluginsLink').href = '/plugins?token=' + encodeURIComponent(token);
+el('aclLink').href = '/';
+el('pluginsLink').href = '/plugins';
 
 async function loadQr() {
   try {
@@ -105,7 +104,9 @@ function openWebui() {
 
 async function refresh(manual) {
   try {
-    const d = await fetch(`/api/status?${q()}`).then((r) => r.json());
+    const res = await fetch(`/api/status?${q()}`);
+    if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/status'); return; }
+    const d = await res.json();
     if (!d.ok) throw new Error(d.error || '状态接口失败');
     const p = d.ports;
     const healthy = p.dshUp && p.bridgeUp && p.napcatWebuiUp && d.docker.ok;
@@ -118,9 +119,14 @@ async function refresh(manual) {
       + row('内存', d.system.memory ? d.system.memory.usedPercent + '%（可用 ' + bytes(d.system.memory.availableBytes) + '）' : '?')
       + row('磁盘 /', d.system.disk ? d.system.disk.usedPercent + '%（可用 ' + bytes(d.system.disk.freeBytes) + '）' : '?');
     el('versions').textContent = `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`;
-    el('ports').innerHTML = row('3080 DSH 面板', pill(p.dshUp, p.dshUp ? '在听' : '没在听'))
-      + row('6700 桥接', pill(p.bridgeUp, p.bridgeUp ? '在听' : '没在听'))
-      + row('6099 NapCat WebUI', pill(p.napcatWebuiUp, p.napcatWebuiUp ? '在听' : '没在听'))
+    const svc = (label, usable, portOpen, probe) => {
+      const text = usable ? '可用' : (portOpen ? '端口通但无响应' : '不可用');
+      const detail = probe ? `HTTP ${probe.code || '-'} · ${probe.ms}ms${probe.reason ? ' · ' + probe.reason : ''}` : '';
+      return row(label, pill(usable, text) + (detail ? ` <span class="muted">${esc(detail)}</span>` : ''), !usable && portOpen);
+    };
+    el('ports').innerHTML = svc('DSH WebUI (3080)', p.dshUsable, p.dshPortOpen, p.dshProbe)
+      + svc('QQ 桥接 (6700)', p.bridgeUsable, p.bridgePortOpen, null)
+      + svc('NapCat WebUI (6099)', p.napcatUsable, p.napcatWebuiPortOpen, p.napcatProbe)
       + row('QQ 登录（桥接视角）', d.bridge.botOnline === true ? pill(true, '在线') : pill(false, d.bridge.botOnline === false ? '离线' : '未知', true));
     el('docker').textContent = (d.docker.containers || []).map((c) => `${c.running ? '●' : '○'} ${c.name}  ${c.status}  [${c.image}]`).join('\n') || '（docker 不可用）';
     const b = d.bridge;
