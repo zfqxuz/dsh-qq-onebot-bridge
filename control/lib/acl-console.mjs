@@ -8,6 +8,7 @@
  * 带 Origin 的请求必须来自控制台页面本身（挡跨站）。
  */
 import { createServer } from 'node:http'
+import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { isAbsolute, join } from 'node:path'
@@ -15,6 +16,7 @@ import { canonicalRoleId, openAclStore } from '../../lib/acl-store.js'
 import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
+import { collectStatus, fetchQrImage, napcatWebUiUrl } from './status-page.mjs'
 
 const MAX_BODY = 256 * 1024
 
@@ -261,6 +263,11 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
     ? readFileSync(new URL('../acl-ui.html', import.meta.url), 'utf8')
     : '<!doctype html><meta charset="utf-8"><h1>权限控制台</h1><p>缺少 control/acl-ui.html</p>')
 
+  // [阶段 0] 状态台页面（同一服务、同一 token；页面本身不需要 token，接口才要）
+  const statusHtml = existsSync(new URL('../status-ui.html', import.meta.url))
+    ? readFileSync(new URL('../status-ui.html', import.meta.url), 'utf8')
+    : '<!doctype html><meta charset="utf-8"><h1>QQ 机器人状态台</h1><p>缺少 control/status-ui.html</p>'
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${host}`)
     const origin = req.headers.origin ?? ''
@@ -272,8 +279,47 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
       res.end(html)
       return
     }
+    if (url.pathname === '/status' || url.pathname === '/status.html') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(statusHtml)
+      return
+    }
     const provided = String(url.searchParams.get('token') ?? req.headers['x-acl-token'] ?? '')
     if (provided !== token) return json(res, 401, { ok: false, error: 'token 不对' })
+
+    // ---- [阶段 0] 状态台 / 扫码接口（只读；重启宿主是唯一的写动作，且要 token）----
+    if (req.method === 'GET' && url.pathname === '/api/status') {
+      return json(res, 200, await collectStatus({ dataRoot }))
+    }
+    if (req.method === 'GET' && url.pathname === '/api/napcat/qr') {
+      const qr = await fetchQrImage({ dataRoot })
+      return json(res, 200, qr.ok ? { ok: true, ageSeconds: qr.ageSeconds, bytes: qr.bytes } : qr)
+    }
+    if (req.method === 'GET' && url.pathname === '/api/napcat/qr.png') {
+      const qr = await fetchQrImage({ dataRoot })
+      if (!qr.ok) return json(res, 404, { ok: false, error: qr.reason })
+      res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' })
+      return res.end(readFileSync(qr.file))
+    }
+    if (req.method === 'GET' && url.pathname === '/api/napcat/webui') {
+      const target = napcatWebUiUrl({})
+      if (url.searchParams.get('format') === 'json') return json(res, 200, { ok: true, url: target })
+      res.writeHead(302, { location: target, 'cache-control': 'no-store' })
+      return res.end()
+    }
+    if (req.method === 'POST' && url.pathname === '/api/system/restart-host') {
+      const script = process.env.QQ_RESTART_SCRIPT || '/home/zfq/dev/dshbot-ops/scripts/restart-dsh.sh'
+      if (!existsSync(script)) return json(res, 500, { ok: false, error: `找不到重启脚本：${script}` })
+      const body = (await readBody(req)) ?? {}
+      const delay = Math.max(0, Math.min(600, Number(body.delay ?? 15)))
+      try {
+        spawn('bash', [script, String(delay)], { detached: true, stdio: 'ignore' }).unref()
+      } catch (error) {
+        return json(res, 500, { ok: false, error: String(error?.message ?? error) })
+      }
+      return json(res, 200, { ok: true, delay, message: `${delay} 秒后重启宿主（重启前会重新探代理，决定走代理还是直连）` })
+    }
+
     if (!existsSync(file)) return json(res, 500, { ok: false, error: `ACL 库不存在：${file}` })
 
     const store = openAclStore(file, { create: false })

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QQ 机器人状态台</title>
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2a2f39; --fg:#e6e6e6; --muted:#8b93a1; --accent:#2b6cb0; --ok:#2f855a; --danger:#a03030; --warn:#b7791f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.55 system-ui,-apple-system,"Noto Sans CJK SC",sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:20; }
+  header b { color:#7cc4ff; } header a { color:#9ecbff; text-decoration:none; }
+  main { padding:16px; display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card h2 { margin:0 0 8px; font-size:15px; color:#9ecbff; }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; border-bottom:1px dashed rgba(255,255,255,.06); }
+  .row:last-child { border-bottom:none; }
+  .k { color:var(--muted); } .v { text-align:right; word-break:break-all; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .up { background:var(--ok); color:#fff; } .down { background:var(--danger); color:#fff; } .warn { background:var(--warn); color:#fff; }
+  pre { margin:6px 0 0; padding:8px; background:#0f1115; border:1px solid var(--line); border-radius:8px; overflow:auto; max-height:220px; font-size:12px; }
+  #qr { width:100%; max-width:240px; background:#fff; border-radius:8px; padding:6px; display:block; margin:6px auto; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:6px 12px; cursor:pointer; }
+  button.ghost { background:#2a3140; }
+  .muted { color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <b>QQ 机器人状态台</b>
+  <span id="verdict" class="pill warn">读取中…</span>
+  <span class="muted" id="stamp"></span>
+  <span style="flex:1"></span>
+  <a id="aclLink" href="/">权限/语料控制台</a>
+  <button class="ghost" onclick="refresh(true)">立即刷新</button>
+</header>
+<main>
+  <section class="card">
+    <h2>系统</h2>
+    <div id="system"></div>
+    <div class="muted" id="versions"></div>
+  </section>
+  <section class="card">
+    <h2>端口 / 容器</h2>
+    <div id="ports"></div>
+    <pre id="docker"></pre>
+  </section>
+  <section class="card">
+    <h2>QQ 桥接</h2>
+    <div id="bridge"></div>
+    <pre id="traces"></pre>
+  </section>
+  <section class="card">
+    <h2>代理</h2>
+    <div id="proxy"></div>
+    <pre id="proxylog"></pre>
+  </section>
+  <section class="card">
+    <h2>扫码登录 QQ（NapCat）</h2>
+    <div id="napcat"></div>
+    <img id="qr" alt="NapCat 登录二维码" style="display:none">
+    <div style="display:flex; gap:8px; justify-content:center; margin-top:6px; flex-wrap:wrap">
+      <button onclick="loadQr(true)">刷新二维码</button>
+      <button class="ghost" onclick="openWebui()">打开 NapCat WebUI</button>
+    </div>
+    <div class="muted" id="qrNote"></div>
+  </section>
+  <section class="card">
+    <h2>watchdog 事故流水</h2>
+    <pre id="incidents"></pre>
+  </section>
+</main>
+<script>
+const token = new URLSearchParams(location.search).get('token') || '';
+const q = (s) => new URLSearchParams({ token }).toString() + (s || '');
+const el = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? '').replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+function row(k, v, cls = '') { return `<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls}">${v}</span></div>`; }
+function pill(ok, text, warn = false) { return `<span class="pill ${ok ? 'up' : (warn ? 'warn' : 'down')}">${esc(text)}</span>`; }
+function bytes(n) { if (!n && n !== 0) return '?'; const u = ['B','K','M','G','T']; let i = 0; let v = n; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 1 : 0)}${u[i]}`; }
+function dur(s) { if (!s && s !== 0) return '?'; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}天${h}时` : (h ? `${h}时${m}分` : `${m}分${Math.floor(s % 60)}秒`); }
+el('aclLink').href = '/?token=' + encodeURIComponent(token);
+
+async function loadQr() {
+  try {
+    const meta = await fetch(`/api/napcat/qr?${q()}`).then((r) => r.json());
+    if (meta.ok) {
+      el('qr').src = `/api/napcat/qr.png?${q('&t=' + Date.now())}`;
+      el('qr').style.display = 'block';
+      const stale = meta.ageSeconds > 120;
+      el('qrNote').textContent = `二维码 ${meta.ageSeconds}s 前从容器取出（${bytes(meta.bytes)}）`
+        + (stale ? '，看起来已过期 —— 点「打开 NapCat WebUI」重新发起登录' : '，扫码后本页会自动刷新');
+    } else {
+      el('qr').style.display = 'none';
+      el('qrNote').textContent = meta.reason || '取不到二维码（可能已登录；需要换号就点「打开 NapCat WebUI」）';
+    }
+  } catch (e) { el('qrNote').textContent = '取二维码失败：' + e.message; }
+}
+function openWebui() {
+  // 走 302 跳转而不是 fetch+window.open：不会被弹窗拦截，token 也只在服务端拼。
+  location.href = `/api/napcat/webui?${q()}`;
+}
+
+async function refresh(manual) {
+  try {
+    const d = await fetch(`/api/status?${q()}`).then((r) => r.json());
+    if (!d.ok) throw new Error(d.error || '状态接口失败');
+    const p = d.ports;
+    const healthy = p.dshUp && p.bridgeUp && p.napcatWebuiUp && d.docker.ok;
+    el('verdict').className = 'pill ' + (healthy ? 'up' : 'down');
+    el('verdict').textContent = healthy ? '整体正常' : '有组件异常';
+    el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
+    el('system').innerHTML = row('主机', esc(d.system.hostname || location.hostname))
+      + row('开机时长', dur(d.system.uptimeSeconds))
+      + row('负载', (d.system.load || []).join(' / '))
+      + row('内存', d.system.memory ? d.system.memory.usedPercent + '%（可用 ' + bytes(d.system.memory.availableBytes) + '）' : '?')
+      + row('磁盘 /', d.system.disk ? d.system.disk.usedPercent + '%（可用 ' + bytes(d.system.disk.freeBytes) + '）' : '?');
+    el('versions').textContent = `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`;
+    el('ports').innerHTML = row('3080 DSH 面板', pill(p.dshUp, p.dshUp ? '在听' : '没在听'))
+      + row('6700 桥接', pill(p.bridgeUp, p.bridgeUp ? '在听' : '没在听'))
+      + row('6099 NapCat WebUI', pill(p.napcatWebuiUp, p.napcatWebuiUp ? '在听' : '没在听'))
+      + row('QQ 登录（桥接视角）', d.bridge.botOnline === true ? pill(true, '在线') : pill(false, d.bridge.botOnline === false ? '离线' : '未知', true));
+    el('docker').textContent = (d.docker.containers || []).map((c) => `${c.running ? '●' : '○'} ${c.name}  ${c.status}  [${c.image}]`).join('\n') || '（docker 不可用）';
+    const b = d.bridge;
+    el('bridge').innerHTML = b.available
+      ? row('宿主 PID', b.pid) + row('版本 / 运行', `${esc(b.version)} · ${dur(b.uptimeSeconds)}`)
+        + row('会话数', b.sessionCount) + row('待处理入群', b.joinsPending)
+        + row('提醒 / 投票 / 游戏', `${b.reminders} / ${b.votes} / ${b.games}`)
+        + row('能力门拒绝次数', b.gateDenied)
+      : row('状态文件', '读不到 runtime.json');
+    el('traces').textContent = (b.recentTraces || []).map((t) => `${t.id}  ${t.chatKey || ''}  ${t.durationMs || 0}ms  [${(t.stages || []).join('>')}]`).join('\n') || '（暂无）';
+    const px = d.proxy;
+    el('proxy').innerHTML = px.available
+      ? row('当前宿主模式', px.mode === 'proxy' ? pill(true, '走代理') : pill(false, '直连（代理不可用或未配）'))
+        + row('最近探活', `${esc(px.code)} · ${px.healthy ? '可用' : '不可用'} · ${esc(px.proxy || '未配置')}`)
+        + row('探测时间', new Date(px.at).toLocaleString('zh-CN'))
+      : row('代理状态', '读不到 proxy.json');
+    el('proxylog').textContent = (px.log || []).join('\n') || '（还没有 proxy check 记录）';
+    el('napcat').innerHTML = row('容器', esc(d.napcat.container)) + row('WebUI', pill(d.napcat.webuiUp, d.napcat.webuiUp ? '可达' : '不可达'))
+      + row('二维码缓存', d.napcat.qr.cached ? `${d.napcat.qr.ageSeconds}s 前（${bytes(d.napcat.qr.bytes)}）` : '未取过');
+    el('incidents').textContent = (d.incidents || []).map((i) => `${new Date(i.at).toLocaleString('zh-CN')}  ${i.kind}  ${i.detail}`).join('\n') || '（无）';
+  } catch (e) {
+    el('verdict').className = 'pill down'; el('verdict').textContent = '读取失败：' + e.message;
+  }
+}
+refresh();
+loadQr();
+setInterval(refresh, 5000);
+setInterval(() => loadQr(), 30000);
+</script>
+</body>
+</html>
