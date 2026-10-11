@@ -18,6 +18,7 @@ import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
 import { collectStatus, fetchQrImage, napcatWebUiUrl } from './status-page.mjs'
 import { COOKIE_NAME, createLoginThrottle, createSessionStore, openUserStore, parseCookies, sessionCookie } from './auth.mjs'
+import { readSystemPage, saveSystemConfig, serviceAction } from './system-page.mjs'
 import { installPlugin, keyFingerprint, listPlugins, pluginDetail, savePluginConfig, setPluginEnabled, sshTest, uninstallPlugin } from './plugin-manager.mjs'
 
 const MAX_BODY = 256 * 1024
@@ -437,6 +438,21 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
         host: String(body.host ?? ''), user: String(body.user ?? ''),
         port: Number(body.port ?? 22) || 22, keyPath: String(body.keyPath ?? ''),
       }))
+    }
+    if (req.method === 'GET' && url.pathname === '/api/system') {
+      return json(res, 200, await readSystemPage())
+    }
+    if (req.method === 'POST' && url.pathname === '/api/system/config') {
+      if (!sessions.hasSudo(sid)) return json(res, 403, { ok: false, error: '要改系统参数先 sudo：POST /api/reauth 校验密码（5 分钟内有效）' })
+      const body = (await readBody(req)) ?? {}
+      const result = saveSystemConfig({ values: body.values ?? {} })
+      return json(res, result.ok ? 200 : 400, result)
+    }
+    if (req.method === 'POST' && url.pathname === '/api/system/service') {
+      if (!sessions.hasSudo(sid)) return json(res, 403, { ok: false, error: '服务控制需要 sudo：POST /api/reauth 校验密码（5 分钟内有效）' })
+      const body = (await readBody(req)) ?? {}
+      const result = await serviceAction({ id: String(body.id ?? ''), action: String(body.action ?? '') })
+      return json(res, result.ok ? 200 : 400, result)
     }
     if (req.method === 'GET' && url.pathname === '/api/status') {
       return json(res, 200, await collectStatus({ dataRoot }))

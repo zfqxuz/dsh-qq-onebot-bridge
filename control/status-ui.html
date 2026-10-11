@@ -67,6 +67,22 @@
     <div class="muted" id="qrNote"></div>
   </section>
   <section class="card">
+    <h2>服务控制</h2>
+    <div class="muted" style="margin-bottom:6px">危险操作（重启宿主 / 重启 NapCat）需要 sudo：会先让你输一次登录密码，5 分钟内有效。</div>
+    <div id="services"></div>
+  </section>
+  <section class="card">
+    <h2>系统参数</h2>
+    <div class="muted" style="margin-bottom:6px">这些是看门狗与代理回落的开关，写在 <span id="envPath"></span>；改完点「保存并重启看门狗」即生效（不影响 QQ）。</div>
+    <div id="params"></div>
+    <button onclick="saveSystem()">保存并重启看门狗</button>
+    <div class="muted" id="sysMsg" style="margin-top:6px"></div>
+  </section>
+  <section class="card" style="grid-column:1/-1">
+    <h2>日志（看门狗 / 重启 / 事故）</h2>
+    <pre id="sysLogs"></pre>
+  </section>
+  <section class="card">
     <h2>watchdog 事故流水</h2>
     <pre id="incidents"></pre>
   </section>
@@ -109,7 +125,7 @@ async function refresh(manual) {
     const d = await res.json();
     if (!d.ok) throw new Error(d.error || '状态接口失败');
     const p = d.ports;
-    const healthy = p.dshUp && p.bridgeUp && p.napcatWebuiUp && d.docker.ok;
+    const healthy = p.dshUsable && p.bridgeUsable && p.napcatUsable && d.docker.ok;
     el('verdict').className = 'pill ' + (healthy ? 'up' : 'down');
     el('verdict').textContent = healthy ? '整体正常' : '有组件异常';
     el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
@@ -151,8 +167,59 @@ async function refresh(manual) {
     el('verdict').className = 'pill down'; el('verdict').textContent = '读取失败：' + e.message;
   }
 }
+async function loadSystem() {
+  const res = await fetch('/api/system');
+  if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/status'); return; }
+  const d = await res.json();
+  el('envPath').textContent = d.envFile;
+  el('services').innerHTML = d.services.map((s) => `
+    <div class="row"><span><b>${esc(s.name)}</b><div class="muted">${esc(s.id)} · ${esc(s.risk)}</div></span>
+      <span class="v">
+        <span class="pill ${['active','running'].includes(s.state) ? 'up' : 'down'}">${esc(s.state)}</span>
+        <span class="muted">PID ${esc(s.pid || '-')} · 重启 ${esc(s.restarts || '0')} 次</span>
+        <button class="ghost" onclick="svc('${esc(s.id)}','restart')">重启</button>
+        ${s.id === 'dsh-web' ? `<button class="ghost" onclick="svc('${esc(s.id)}','stop')">停止</button>` : ''}
+      </span></div>`).join('');
+  el('params').innerHTML = d.params.map((p) => `
+    <div class="row"><span>${esc(p.label)}<div class="muted">${esc(p.key)}${p.missing ? ' · 当前用的是默认值' : ''}${p.min !== null ? ` · 范围 ${p.min}~${p.max}` : ''}</div></span>
+      <span class="v"><input data-pkey="${esc(p.key)}" value="${esc(p.value)}" style="width:220px"></span></div>`).join('');
+  el('sysLogs').textContent = [...d.logs.watchdog.slice(-25), '', '--- 重启日志 ---', ...d.logs.restart]
+    .concat(['', '--- 事故流水 ---', ...d.logs.incidents.map((i) => `${new Date(i.at).toLocaleString('zh-CN')} ${i.kind} ${i.detail}`)]).join('\n');
+}
+async function ensureSudo() {
+  const r = await fetch('/api/session').then((x) => x.json());
+  if (r.sudo) return true;
+  const pw = window.prompt('危险操作需要确认密码（5 分钟内有效）');
+  if (!pw) return false;
+  const res = await fetch('/api/reauth', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) });
+  const d = await res.json();
+  if (!d.ok) { alert(d.error || '密码不对'); return false; }
+  return true;
+}
+async function svc(id, action) {
+  if (!(await ensureSudo())) return;
+  const res = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, action }) });
+  const d = await res.json();
+  alert(d.ok ? `${id} 已执行 ${action}` : `失败：${d.error}`);
+  setTimeout(loadSystem, 1500);
+}
+async function saveSystem() {
+  if (!(await ensureSudo())) return;
+  const values = {};
+  for (const node of el('params').querySelectorAll('[data-pkey]')) values[node.dataset.pkey] = node.value;
+  const res = await fetch('/api/system/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) });
+  const d = await res.json();
+  if (!d.ok) { el('sysMsg').textContent = '失败：' + d.error; return; }
+  el('sysMsg').textContent = `已写入 ${d.changed.join(', ')}${d.rejected?.length ? `（跳过 ${d.rejected.join(', ')}）` : ''}，备份 ${d.backup}`;
+  const r2 = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dsh-watchdog', action: 'restart' }) });
+  const d2 = await r2.json();
+  el('sysMsg').textContent += d2.ok ? ' · 看门狗已重启，参数已生效' : ` · 看门狗重启失败：${d2.error}`;
+  setTimeout(loadSystem, 1500);
+}
 refresh();
 loadQr();
+loadSystem();
+setInterval(loadSystem, 20000);
 setInterval(refresh, 5000);
 setInterval(() => loadQr(), 30000);
 </script>
