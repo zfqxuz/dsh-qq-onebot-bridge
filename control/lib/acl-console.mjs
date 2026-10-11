@@ -17,7 +17,7 @@ import { resolveCorpusDetailed } from '../../lib/corpus.js'
 import { PERMISSIONS, isKnownPermission } from '../../lib/permissions.js'
 import { CAPABILITIES, LIMITS } from '../../lib/capabilities.js'
 import { collectStatus, fetchQrImage, napcatWebUiUrl } from './status-page.mjs'
-import { keyFingerprint, listPlugins, sshTest, updateHomePluginValue } from './plugin-manager.mjs'
+import { installPlugin, keyFingerprint, listPlugins, pluginDetail, savePluginConfig, setPluginEnabled, sshTest, uninstallPlugin } from './plugin-manager.mjs'
 
 const MAX_BODY = 256 * 1024
 
@@ -300,9 +300,27 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
     if (req.method === 'GET' && url.pathname === '/api/plugins') {
       return json(res, 200, await listPlugins({ dshHome: process.env.DSH_HOME || '/home/zfq/.dsh', profile: process.env.QQ_PROFILE || 'web' }))
     }
+    if (req.method === 'GET' && url.pathname === '/api/plugins/detail') {
+      return json(res, 200, pluginDetail(String(url.searchParams.get('id') ?? '')))
+    }
     if (req.method === 'POST' && url.pathname === '/api/plugins/config') {
       const body = (await readBody(req)) ?? {}
-      const result = updateHomePluginValue({ dshHome: process.env.DSH_HOME || '/home/zfq/.dsh', id: String(body.id ?? ''), key: String(body.key ?? ''), value: body.value })
+      const result = savePluginConfig({ id: String(body.id ?? ''), values: body.values ?? {} })
+      return json(res, result.ok ? 200 : 400, result)
+    }
+    if (req.method === 'POST' && url.pathname === '/api/plugins/toggle') {
+      const body = (await readBody(req)) ?? {}
+      const result = setPluginEnabled({ id: String(body.id ?? ''), enabled: body.enabled !== false })
+      return json(res, result.ok ? 200 : 400, result)
+    }
+    if (req.method === 'POST' && url.pathname === '/api/plugins/install') {
+      const body = (await readBody(req)) ?? {}
+      const result = installPlugin({ source: String(body.source ?? ''), enable: body.enable !== false })
+      return json(res, result.ok ? 200 : 400, result)
+    }
+    if (req.method === 'POST' && url.pathname === '/api/plugins/uninstall') {
+      const body = (await readBody(req)) ?? {}
+      const result = uninstallPlugin({ id: String(body.id ?? ''), removeLink: body.removeLink !== false })
       return json(res, result.ok ? 200 : 400, result)
     }
     if (req.method === 'GET' && url.pathname === '/api/plugins/key-fingerprint') {
