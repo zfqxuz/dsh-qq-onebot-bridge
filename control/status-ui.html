@@ -162,7 +162,7 @@ async function refresh() {
     + tr('开机时长', dur(d.system.uptimeSeconds)));
   setText('versions', `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`);
 
-  setHtml('ports', tr('DSH WebUI 3080', dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`))
+  setHtml('ports', tr('DSH WebUI ' + p.dsh, dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`))
     + tr('QQ 桥接 6700', dot(p.bridgeUsable ? 'ok' : (p.bridgePortOpen ? 'warn' : 'bad'), p.bridgeUsable ? '可用' : '不可用', p.bridgePortOpen ? '端口在听' : '端口未监听'))
     + tr('NapCat WebUI 6099', dot(p.napcatUsable ? 'ok' : (p.napcatWebuiPortOpen ? 'warn' : 'bad'), p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`)));
 
