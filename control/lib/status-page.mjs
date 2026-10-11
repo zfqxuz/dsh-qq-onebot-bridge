@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dataRoot as resolveDataRoot, napcatConfigDir as resolveNapcatConfigDir, restartScript as resolveRestartScript, dshVersion } from './paths.mjs'
 import { DEFAULT_DSH_PORT, dshPortCandidates } from './dsh-port.mjs'
+import { describeProxy } from './proxy-state.mjs'
 
 const DATA_ROOT = resolveDataRoot
 const CONFIG_FILE = process.env.QQ_CONTROL_CONFIG || join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'qq-control.json')
@@ -203,7 +204,8 @@ export async function collectStatus(overrides = {}) {
   const opts = statusDefaults(overrides)
   const { dataRoot } = opts
   const runtime = readJsonSafe(join(dataRoot, 'state', 'runtime.json'))
-  const proxy = readJsonSafe(join(dataRoot, 'state', 'proxy.json'))
+  // 代理状态：以"宿主进程实际的环境变量"为准，状态文件里的探活记录只作为细节（并标明新旧）
+  const proxy = describeProxy(dataRoot)
   const watchdogLog = tailLines(join(dataRoot, 'logs', 'dsh-watchdog.log'), 400)
     .filter((line) => line.includes('proxy check'))
     .slice(-5)

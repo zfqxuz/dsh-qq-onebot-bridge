@@ -142,11 +142,19 @@ async function refresh() {
   v.lastElementChild.textContent = healthy ? '全部正常' : '有组件异常';
   el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
 
+  // 代理：走代理还是直连，以"正在跑的宿主进程的环境变量"为准（状态文件可能是旧的）
+  const px = d.proxy || {};
+  const proxyModeText = px.mode === 'proxy' ? '走代理' : (px.mode === 'direct' ? '直连' : '未知');
+  const proxyModeOk = px.mode === 'proxy' && px.healthy === false ? false : px.mode !== 'unknown';
+  const proxyDetail = `${px.proxy || '未配置'} · 来源：${px.modeSource || '未知'}`
+    + (px.probe ? ` · 最近探活 ${px.probe.code || '-'}` : '')
+    + (px.stale ? ' · 状态文件里是旧值' : '');
+
   const tiles = [
     ['DSH 宿主', p.dshUsable, p.dshUsable ? '可用' : '不可用', `端口 ${p.dsh}（${p.dshSource || '来源未知'}） · HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`],
     ['QQ 桥接', p.bridgeUsable, p.bridgeUsable ? '可用' : '不可用', `pid ${d.bridge.pid ?? '-'} · 会话 ${d.bridge.sessionCount ?? '-'}`],
     ['NapCat', p.napcatUsable, p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`],
-    ['代理', d.proxy.healthy !== false, d.proxy.mode === 'proxy' ? '走代理' : '直连', `${d.proxy.code || '-'} · ${d.proxy.proxy || '未配置'}`],
+    ['代理', proxyModeOk, proxyModeText, proxyDetail],
   ];
   if (!el('tiles').dataset.built) {
     el('tiles').innerHTML = tiles.map(([label], i) => `<div class="qqc-tile"><div class="lab">${esc(label)}</div><div class="val"><span id="tile-${i}" class="qqc-dot"><i></i><span id="tile-${i}-text"></span></span></div><div class="det" id="tile-${i}-det"></div></div>`).join('');
@@ -176,10 +184,14 @@ async function refresh() {
     : tr('状态文件', '<span class="qqc-sub">读不到 runtime.json</span>'));
   setText('traces', (b.recentTraces || []).map((t) => `${t.id}  ${t.chatKey || ''}  ${t.durationMs || 0}ms  [${(t.stages || []).join(' > ')}]`).join('\n') || '（暂无）');
 
-  const px = d.proxy;
-  setHtml('proxy', px.available
-    ? tr('当前模式', px.mode === 'proxy' ? dot('ok', '走代理') : dot('warn', '直连')) + tr('最近探活', `${esc(px.code)} · ${px.healthy ? '可用' : '不可用'}`) + tr('代理地址', esc(px.proxy || '未配置')) + tr('探测时间', new Date(px.at).toLocaleString('zh-CN'))
-    : tr('代理状态', '<span class="qqc-sub">读不到 proxy.json</span>'));
+  setHtml('proxy', px.mode && px.mode !== 'unknown'
+    ? tr('当前模式', (px.mode === 'proxy' ? dot('ok', '走代理') : dot('warn', '直连')) + `<span class="qqc-sub">　依据：${esc(px.modeSource || '未知')}</span>`)
+      + (px.stale ? tr('提醒', dot('warn', `状态文件里写的是「${px.mode === 'proxy' ? '直连' : '走代理'}」，已经过期`)) : '')
+      + tr('代理地址', esc(px.proxy || '未配置'))
+      + (px.probe
+        ? tr('最近探活', `${esc(px.probe.code || '-')} · ${px.probe.healthy ? '可用' : '不可用'}`) + tr('探测时间', px.probe.at ? new Date(px.probe.at).toLocaleString('zh-CN') : '-') + tr('记录来源', esc(px.probe.source || '-'))
+        : tr('最近探活', '<span class="qqc-sub">还没有探活记录</span>'))
+    : tr('代理状态', '<span class="qqc-sub">找不到宿主进程，也没有 proxy.json</span>'));
   setText('proxylog', (px.log || []).join('\n') || '（还没有 proxy check 记录）');
 
   setHtml('napcat', tr('容器', esc(d.napcat.container)) + tr('WebUI', dot(d.napcat.webuiUp ? 'ok' : 'bad', d.napcat.webuiUp ? '可达' : '不可达'))

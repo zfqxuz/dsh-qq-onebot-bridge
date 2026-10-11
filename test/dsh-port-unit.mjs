@@ -33,9 +33,11 @@ check('NUL 分隔的 --port 3081',
 check('--port=3082', parseDshCmdline(nul('node', 'dsh', 'web', '--port=3082'))?.port === 3082)
 check('-p 3083', parseDshCmdline(nul('node', 'dsh', 'web', '-p', '3083'))?.port === 3083)
 check('没有 web 子命令 → null', parseDshCmdline(nul('node', 'something-else', '--port', '3081')) === null)
-check('没有端口参数 → null', parseDshCmdline(nul('node', 'dsh', 'web', '--no-open')) === null)
+check('没有端口参数 → 认得是 dsh web，但端口为 null',
+  parseDshCmdline(nul('node', 'dsh', 'web', '--no-open'))?.port === null)
 check('空 cmdline → null', parseDshCmdline('') === null && parseDshCmdline('\0\0') === null)
-check('非法端口不算数', parseDshCmdline(nul('node', 'dsh', 'web', '--port', '70000')) === null)
+check('非法端口不算数（不返回端口）', parseDshCmdline(nul('node', 'dsh', 'web', '--port', '70000'))?.port === null)
+check('不是 dsh 的 web → null', parseDshCmdline(nul('node', '/opt/other/bin/web', 'web', '--port', '3081')) === null)
 
 // ===== 3. 扫假 /proc =====
 const tmp = mkdtempSync(join(tmpdir(), 'dsh-port-'))

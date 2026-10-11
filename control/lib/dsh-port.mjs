@@ -37,33 +37,36 @@ function validPort(value) {
 }
 
 /**
- * 从一条 cmdline 里认出「dsh web … --port N」。
+ * 从一条 cmdline 里认出「dsh web …」。
  * cmdline 是 NUL 分隔的；为了让测试和手工调用方便，空白分隔也认。
- * 只有一个端口参数（--port 3081 / --port=3081 / -p 3081）才算，避免误认别的东西。
+ * - 不是 dsh 的 web 子命令 → null（避免把别的进程的 web 参数误认进来）
+ * - 是 dsh web 但没写 --port（默认端口）→ 返回 { port: null }，
+ *   调用方自己决定要不要（找端口时不要，判断"宿主在不在跑/带不带代理"时要）
  */
 export function parseDshCmdline(text) {
   const raw = String(text ?? '')
   const args = (raw.includes('\0') ? raw.split('\0') : raw.split(/\s+/)).filter(Boolean)
   if (args.length === 0) return null
-  const hasWeb = args.some((a) => a === 'web' || a === '/web')
-  if (!hasWeb) return null
+  if (!args.some((a) => a === 'web' || a === '/web')) return null
+  const looksLikeDsh = args.some((a) => /(^|\/)dsh$/.test(a) || /(^|\/)dsh\.(m?js|cjs)$/.test(a) || /@deepseek-ai\/dsh\//.test(a) || /dsh\/(bin|index)\.js$/.test(a))
+  if (!looksLikeDsh) return null
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
     const inline = /^--?port=(\d+)$/.exec(arg)
-    if (inline) return validPort(inline[1]) ? { port: Number(inline[1]), argv: args } : null
+    if (inline) return { port: validPort(inline[1]) ? Number(inline[1]) : null, argv: args }
     if (arg === '--port' || arg === '-p') {
       const next = args[i + 1]
-      return validPort(next) ? { port: Number(next), argv: args } : null
+      return { port: validPort(next) ? Number(next) : null, argv: args }
     }
   }
-  return null
+  return { port: null, argv: args }
 }
 
 /**
  * 扫 /proc 找正在跑的 dsh 宿主进程。进程越新越靠前（同名旧进程留给候选探活去淘汰）。
  * 非 Linux（没有 /proc）时返回空数组，由调用方回落到其它来源。
  */
-export function scanDshProcesses({ procRoot = '/proc', readdir = readdirSync, readFile = readFileSync } = {}) {
+export function scanDshProcesses({ procRoot = '/proc', readdir = readdirSync, readFile = readFileSync, requirePort = true } = {}) {
   const found = []
   let entries = []
   try { entries = readdir(procRoot) } catch { return found }
@@ -73,6 +76,7 @@ export function scanDshProcesses({ procRoot = '/proc', readdir = readdirSync, re
     try { cmdline = readFile(join(procRoot, String(name), 'cmdline'), 'utf8') } catch { continue }
     const parsed = parseDshCmdline(cmdline)
     if (!parsed) continue
+    if (requirePort && parsed.port === null) continue
     let started = 0
     try {
       // /proc/<pid>/stat 第 22 个字段是启动时刻；comm 里有空格，所以按最后一个 ')' 切
