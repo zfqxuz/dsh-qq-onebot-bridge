@@ -334,6 +334,11 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
       return
     }
     // ---- [登录改造] 登录页与登录/登出/会话接口（不需要已登录）----
+    if (url.pathname === '/console.css') {
+      const css = existsSync(new URL('../console.css', import.meta.url)) ? readFileSync(new URL('../console.css', import.meta.url), 'utf8') : ''
+      res.writeHead(200, { 'content-type': 'text/css; charset=utf-8', 'cache-control': 'no-store' })
+      return res.end(css)
+    }
     if (url.pathname === '/login') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       return res.end(LOGIN_PAGE)

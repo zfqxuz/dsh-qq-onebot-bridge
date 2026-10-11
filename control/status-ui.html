@@ -3,225 +3,241 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>QQ 机器人状态台</title>
-<style>
-  :root { color-scheme: dark; --bg:#14161a; --panel:#1c1f26; --line:#2a2f39; --fg:#e6e6e6; --muted:#8b93a1; --accent:#2b6cb0; --ok:#2f855a; --danger:#a03030; --warn:#b7791f; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.55 system-ui,-apple-system,"Noto Sans CJK SC",sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:20; }
-  header b { color:#7cc4ff; } header a { color:#9ecbff; text-decoration:none; }
-  main { padding:16px; display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
-  .card h2 { margin:0 0 8px; font-size:15px; color:#9ecbff; }
-  .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; border-bottom:1px dashed rgba(255,255,255,.06); }
-  .row:last-child { border-bottom:none; }
-  .k { color:var(--muted); } .v { text-align:right; word-break:break-all; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
-  .up { background:var(--ok); color:#fff; } .down { background:var(--danger); color:#fff; } .warn { background:var(--warn); color:#fff; }
-  pre { margin:6px 0 0; padding:8px; background:#0f1115; border:1px solid var(--line); border-radius:8px; overflow:auto; max-height:220px; font-size:12px; }
-  #qr { width:100%; max-width:240px; background:#fff; border-radius:8px; padding:6px; display:block; margin:6px auto; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:6px 12px; cursor:pointer; }
-  button.ghost { background:#2a3140; }
-  .muted { color:var(--muted); font-size:12px; }
-</style>
+<title>QQ 控制台 · 状态</title>
+<link rel="stylesheet" href="/console.css">
 </head>
-<body>
-<header>
-  <b>QQ 机器人状态台</b>
-  <span id="verdict" class="pill warn">读取中…</span>
-  <span class="muted" id="stamp"></span>
-  <span style="flex:1"></span>
-  <a id="pluginsLink" href="/plugins">插件与密钥</a>
-  <a id="aclLink" href="/">权限/语料控制台</a>
-  <button class="ghost" onclick="refresh(true)">立即刷新</button>
-</header>
-<main>
-  <section class="card">
-    <h2>系统</h2>
-    <div id="system"></div>
-    <div class="muted" id="versions"></div>
+<body class="qqc">
+<div class="qqc-top"><div class="qqc-top-in">
+  <span class="qqc-title">QQ 控制台</span>
+  <span id="verdict" class="qqc-dot"><i></i><span>读取中…</span></span>
+  <span class="qqc-sub" id="stamp"></span>
+  <nav>
+    <a href="/plugins">插件</a>
+    <a href="/">权限与语料</a>
+    <a href="#" onclick="doLogout();return false">退出</a>
+    <button class="qqc-btn ghost sm" onclick="refresh(true)">刷新</button>
+  </nav>
+</div></div>
+
+<div class="qqc-wrap">
+  <div class="qqc-tiles" id="tiles"></div>
+
+  <div class="qqc-grid">
+    <section class="qqc-card">
+      <h2 class="qqc-h">系统</h2>
+      <table class="qqc-table" id="system"></table>
+      <div class="qqc-sub" id="versions" style="margin-top:10px"></div>
+    </section>
+    <section class="qqc-card">
+      <h2 class="qqc-h">服务可用性</h2>
+      <table class="qqc-table" id="ports"></table>
+    </section>
+  </div>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">服务控制</h2>
+    <div class="qqc-sub" style="margin-bottom:10px">危险操作（重启宿主、重启 NapCat）需要输一次登录密码，5 分钟内有效。</div>
+    <table class="qqc-table" id="services"></table>
+    <div class="qqc-msg" id="svcMsg"></div>
   </section>
-  <section class="card">
-    <h2>服务可用性 / 容器</h2>
-    <div id="ports"></div>
-    <pre id="docker"></pre>
-  </section>
-  <section class="card">
-    <h2>QQ 桥接</h2>
-    <div id="bridge"></div>
-    <pre id="traces"></pre>
-  </section>
-  <section class="card">
-    <h2>代理</h2>
-    <div id="proxy"></div>
-    <pre id="proxylog"></pre>
-  </section>
-  <section class="card">
-    <h2>扫码登录 QQ（NapCat）</h2>
-    <div id="napcat"></div>
-    <img id="qr" alt="NapCat 登录二维码" style="display:none">
-    <div style="display:flex; gap:8px; justify-content:center; margin-top:6px; flex-wrap:wrap">
-      <button onclick="loadQr(true)">刷新二维码</button>
-      <button class="ghost" onclick="openWebui()">打开 NapCat WebUI</button>
-    </div>
-    <div class="muted" id="qrNote"></div>
-  </section>
-  <section class="card">
-    <h2>服务控制</h2>
-    <div class="muted" style="margin-bottom:6px">危险操作（重启宿主 / 重启 NapCat）需要 sudo：会先让你输一次登录密码，5 分钟内有效。</div>
-    <div id="services"></div>
-  </section>
-  <section class="card">
-    <h2>系统参数</h2>
-    <div class="muted" style="margin-bottom:6px">这些是看门狗与代理回落的开关，写在 <span id="envPath"></span>；改完点「保存并重启看门狗」即生效（不影响 QQ）。</div>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">系统参数</h2>
+    <div class="qqc-sub" style="margin-bottom:10px">看门狗与代理回落开关，写在 <span class="qqc-v" id="envPath"></span>。保存后自动重启看门狗，不影响 QQ。</div>
     <div id="params"></div>
-    <button onclick="saveSystem()">保存并重启看门狗</button>
-    <div class="muted" id="sysMsg" style="margin-top:6px"></div>
+    <div class="qqc-actions" style="margin:16px 0 0">
+      <button class="qqc-btn" onclick="saveSystem()">保存并重启看门狗</button>
+      <button class="qqc-btn ghost" onclick="loadSystem()">放弃修改</button>
+    </div>
+    <div class="qqc-msg" id="sysMsg"></div>
   </section>
-  <section class="card" style="grid-column:1/-1">
-    <h2>日志（看门狗 / 重启 / 事故）</h2>
-    <pre id="sysLogs"></pre>
+
+  <div class="qqc-grid">
+    <section class="qqc-card">
+      <h2 class="qqc-h">QQ 桥接</h2>
+      <table class="qqc-table" id="bridge"></table>
+      <details style="margin-top:12px"><summary class="qqc-sub">最近 trace</summary><div class="qqc-log" id="traces" style="margin-top:8px"></div></details>
+    </section>
+    <section class="qqc-card">
+      <h2 class="qqc-h">代理</h2>
+      <table class="qqc-table" id="proxy"></table>
+      <details style="margin-top:12px"><summary class="qqc-sub">探活日志</summary><div class="qqc-log" id="proxylog" style="margin-top:8px"></div></details>
+    </section>
+  </div>
+
+  <div class="qqc-grid">
+    <section class="qqc-card">
+      <h2 class="qqc-h">扫码登录 QQ</h2>
+      <table class="qqc-table" id="napcat"></table>
+      <div style="display:flex; gap:16px; align-items:flex-start; margin-top:14px; flex-wrap:wrap">
+        <img id="qr" class="qqc-qr" alt="登录二维码" style="display:none">
+        <div>
+          <div class="qqc-actions" style="margin:0 0 8px">
+            <button class="qqc-btn" onclick="loadQr()">刷新二维码</button>
+            <button class="qqc-btn ghost" onclick="openWebui()">打开 NapCat WebUI</button>
+          </div>
+          <div class="qqc-sub" id="qrNote"></div>
+        </div>
+      </div>
+    </section>
+    <section class="qqc-card">
+      <h2 class="qqc-h">容器</h2>
+      <table class="qqc-table" id="docker"></table>
+    </section>
+  </div>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">日志</h2>
+    <div class="qqc-logs">
+      <details open><summary>看门狗（最近 25 行）</summary><div class="qqc-log" id="logWatchdog"></div></details>
+      <details><summary>重启记录</summary><div class="qqc-log" id="logRestart"></div></details>
+      <details open><summary>事故流水</summary><div class="qqc-log" id="logIncidents"></div></details>
+    </div>
   </section>
-  <section class="card">
-    <h2>watchdog 事故流水</h2>
-    <pre id="incidents"></pre>
-  </section>
-</main>
+</div>
+
 <script>
 const q = (s) => (s || '').replace(/^&/, '');
 const el = (id) => document.getElementById(id);
-const esc = (v) => String(v ?? '').replace(/[&<>]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
-function row(k, v, cls = '') { return `<div class="row"><span class="k">${esc(k)}</span><span class="v ${cls}">${v}</span></div>`; }
-function pill(ok, text, warn = false) { return `<span class="pill ${ok ? 'up' : (warn ? 'warn' : 'down')}">${esc(text)}</span>`; }
-function bytes(n) { if (!n && n !== 0) return '?'; const u = ['B','K','M','G','T']; let i = 0; let v = n; while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 1 : 0)}${u[i]}`; }
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+function tr(k, v) { return `<tr><td class="qqc-k">${esc(k)}</td><td class="qqc-v">${v}</td></tr>`; }
+function dot(state, text, detail = '') {
+  return `<span class="qqc-dot ${state}"><i></i><span>${esc(text)}</span></span>${detail ? ` <span class="qqc-sub">${esc(detail)}</span>` : ''}`;
+}
+function bytes(n) { if (!n && n !== 0) return '?'; const u = ['B','K','M','G','T']; let i = 0; let v = Number(n); while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; } return `${v.toFixed(i ? 1 : 0)}${u[i]}`; }
 function dur(s) { if (!s && s !== 0) return '?'; const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}天${h}时` : (h ? `${h}时${m}分` : `${m}分${Math.floor(s % 60)}秒`); }
-el('aclLink').href = '/';
-el('pluginsLink').href = '/plugins';
+el('pluginsLink') && (el('pluginsLink').href = '/plugins');
 
+async function doLogout() {
+  await fetch('/api/logout', { method: 'POST' });
+  location.href = '/login';
+}
 async function loadQr() {
   try {
     const meta = await fetch(`/api/napcat/qr?${q()}`).then((r) => r.json());
     if (meta.ok) {
       el('qr').src = `/api/napcat/qr.png?${q('&t=' + Date.now())}`;
       el('qr').style.display = 'block';
-      const stale = meta.ageSeconds > 120;
-      el('qrNote').textContent = `二维码 ${meta.ageSeconds}s 前从容器取出（${bytes(meta.bytes)}）`
-        + (stale ? '，看起来已过期 —— 点「打开 NapCat WebUI」重新发起登录' : '，扫码后本页会自动刷新');
+      el('qrNote').textContent = `二维码 ${meta.ageSeconds}s 前从容器取出（${bytes(meta.bytes)}）` + (meta.ageSeconds > 120 ? '，看起来已过期 —— 点「打开 NapCat WebUI」重新发起登录' : '，扫码后本页会自动刷新');
     } else {
       el('qr').style.display = 'none';
-      el('qrNote').textContent = meta.reason || '取不到二维码（可能已登录；需要换号就点「打开 NapCat WebUI」）';
+      el('qrNote').textContent = meta.reason || '取不到二维码（可能已登录；要换号就点「打开 NapCat WebUI」）';
     }
   } catch (e) { el('qrNote').textContent = '取二维码失败：' + e.message; }
 }
-function openWebui() {
-  // 走 302 跳转而不是 fetch+window.open：不会被弹窗拦截，token 也只在服务端拼。
-  location.href = `/api/napcat/webui?${q()}`;
-}
+function openWebui() { location.href = `/api/napcat/webui?${q()}`; }
 
-async function refresh(manual) {
-  try {
-    const res = await fetch(`/api/status?${q()}`);
-    if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/status'); return; }
-    const d = await res.json();
-    if (!d.ok) throw new Error(d.error || '状态接口失败');
-    const p = d.ports;
-    const healthy = p.dshUsable && p.bridgeUsable && p.napcatUsable && d.docker.ok;
-    el('verdict').className = 'pill ' + (healthy ? 'up' : 'down');
-    el('verdict').textContent = healthy ? '整体正常' : '有组件异常';
-    el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
-    el('system').innerHTML = row('主机', esc(d.system.hostname || location.hostname))
-      + row('开机时长', dur(d.system.uptimeSeconds))
-      + row('负载', (d.system.load || []).join(' / '))
-      + row('内存', d.system.memory ? d.system.memory.usedPercent + '%（可用 ' + bytes(d.system.memory.availableBytes) + '）' : '?')
-      + row('磁盘 /', d.system.disk ? d.system.disk.usedPercent + '%（可用 ' + bytes(d.system.disk.freeBytes) + '）' : '?');
-    el('versions').textContent = `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`;
-    const svc = (label, usable, portOpen, probe) => {
-      const text = usable ? '可用' : (portOpen ? '端口通但无响应' : '不可用');
-      const detail = probe ? `HTTP ${probe.code || '-'} · ${probe.ms}ms${probe.reason ? ' · ' + probe.reason : ''}` : '';
-      return row(label, pill(usable, text) + (detail ? ` <span class="muted">${esc(detail)}</span>` : ''), !usable && portOpen);
-    };
-    el('ports').innerHTML = svc('DSH WebUI (3080)', p.dshUsable, p.dshPortOpen, p.dshProbe)
-      + svc('QQ 桥接 (6700)', p.bridgeUsable, p.bridgePortOpen, null)
-      + svc('NapCat WebUI (6099)', p.napcatUsable, p.napcatWebuiPortOpen, p.napcatProbe)
-      + row('QQ 登录（桥接视角）', d.bridge.botOnline === true ? pill(true, '在线') : pill(false, d.bridge.botOnline === false ? '离线' : '未知', true));
-    el('docker').textContent = (d.docker.containers || []).map((c) => `${c.running ? '●' : '○'} ${c.name}  ${c.status}  [${c.image}]`).join('\n') || '（docker 不可用）';
-    const b = d.bridge;
-    el('bridge').innerHTML = b.available
-      ? row('宿主 PID', b.pid) + row('版本 / 运行', `${esc(b.version)} · ${dur(b.uptimeSeconds)}`)
-        + row('会话数', b.sessionCount) + row('待处理入群', b.joinsPending)
-        + row('提醒 / 投票 / 游戏', `${b.reminders} / ${b.votes} / ${b.games}`)
-        + row('能力门拒绝次数', b.gateDenied)
-      : row('状态文件', '读不到 runtime.json');
-    el('traces').textContent = (b.recentTraces || []).map((t) => `${t.id}  ${t.chatKey || ''}  ${t.durationMs || 0}ms  [${(t.stages || []).join('>')}]`).join('\n') || '（暂无）';
-    const px = d.proxy;
-    el('proxy').innerHTML = px.available
-      ? row('当前宿主模式', px.mode === 'proxy' ? pill(true, '走代理') : pill(false, '直连（代理不可用或未配）'))
-        + row('最近探活', `${esc(px.code)} · ${px.healthy ? '可用' : '不可用'} · ${esc(px.proxy || '未配置')}`)
-        + row('探测时间', new Date(px.at).toLocaleString('zh-CN'))
-      : row('代理状态', '读不到 proxy.json');
-    el('proxylog').textContent = (px.log || []).join('\n') || '（还没有 proxy check 记录）';
-    el('napcat').innerHTML = row('容器', esc(d.napcat.container)) + row('WebUI', pill(d.napcat.webuiUp, d.napcat.webuiUp ? '可达' : '不可达'))
-      + row('二维码缓存', d.napcat.qr.cached ? `${d.napcat.qr.ageSeconds}s 前（${bytes(d.napcat.qr.bytes)}）` : '未取过');
-    el('incidents').textContent = (d.incidents || []).map((i) => `${new Date(i.at).toLocaleString('zh-CN')}  ${i.kind}  ${i.detail}`).join('\n') || '（无）';
-  } catch (e) {
-    el('verdict').className = 'pill down'; el('verdict').textContent = '读取失败：' + e.message;
-  }
+async function refresh() {
+  const res = await fetch(`/api/status?${q()}`);
+  if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/status'); return; }
+  const d = await res.json();
+  const p = d.ports;
+  const healthy = p.dshUsable && p.bridgeUsable && p.napcatUsable && d.docker.ok;
+  const v = el('verdict');
+  v.className = 'qqc-dot ' + (healthy ? 'ok' : 'bad');
+  v.lastElementChild.textContent = healthy ? '全部正常' : '有组件异常';
+  el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
+
+  const tile = (label, ok, text, detail) => `<div class="qqc-tile"><div class="lab">${esc(label)}</div><div class="val">${dot(ok ? 'ok' : 'bad', text)}</div><div class="det">${esc(detail)}</div></div>`;
+  el('tiles').innerHTML = tile('DSH 宿主', p.dshUsable, p.dshUsable ? '可用' : '不可用', `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`)
+    + tile('QQ 桥接', p.bridgeUsable, p.bridgeUsable ? '可用' : '不可用', `pid ${d.bridge.pid ?? '-'} · 会话 ${d.bridge.sessionCount ?? '-'}`)
+    + tile('NapCat', p.napcatUsable, p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`)
+    + tile('代理', d.proxy.healthy !== false, d.proxy.mode === 'proxy' ? '走代理' : '直连', `${d.proxy.code || '-'} · ${d.proxy.proxy || '未配置'}`);
+
+  el('system').innerHTML = tr('负载', (d.system.load || []).join(' / '))
+    + tr('内存', d.system.memory ? `${d.system.memory.usedPercent}%（可用 ${bytes(d.system.memory.availableBytes)}）` : '?')
+    + tr('磁盘', d.system.disk ? `${d.system.disk.usedPercent}%（可用 ${bytes(d.system.disk.freeBytes)}）` : '?')
+    + tr('开机时长', dur(d.system.uptimeSeconds));
+  el('versions').textContent = `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`;
+
+  el('ports').innerHTML = tr('DSH WebUI 3080', dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`))
+    + tr('QQ 桥接 6700', dot(p.bridgeUsable ? 'ok' : (p.bridgePortOpen ? 'warn' : 'bad'), p.bridgeUsable ? '可用' : '不可用', p.bridgePortOpen ? '端口在听' : '端口未监听'))
+    + tr('NapCat WebUI 6099', dot(p.napcatUsable ? 'ok' : (p.napcatWebuiPortOpen ? 'warn' : 'bad'), p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`));
+
+  el('docker').innerHTML = (d.docker.containers || []).map((c) => tr(c.name, dot(c.running ? (c.healthy || !/healthy/.test(c.status) ? 'ok' : 'warn') : 'bad', c.running ? (c.healthy ? 'healthy' : '运行中') : '未运行', c.status))).join('') || '<tr><td class="qqc-empty">docker 不可用</td></tr>';
+
+  const b = d.bridge;
+  el('bridge').innerHTML = b.available
+    ? tr('宿主 PID', esc(b.pid)) + tr('版本 / 运行', `${esc(b.version)} · ${dur(b.uptimeSeconds)}`) + tr('会话数', b.sessionCount)
+      + tr('待处理入群', b.joinsPending) + tr('提醒 / 投票 / 游戏', `${b.reminders} / ${b.votes} / ${b.games}`) + tr('能力门拒绝', b.gateDenied)
+    : tr('状态文件', '<span class="qqc-sub">读不到 runtime.json</span>');
+  el('traces').textContent = (b.recentTraces || []).map((t) => `${t.id}  ${t.chatKey || ''}  ${t.durationMs || 0}ms  [${(t.stages || []).join(' > ')}]`).join('\n') || '（暂无）';
+
+  const px = d.proxy;
+  el('proxy').innerHTML = px.available
+    ? tr('当前模式', px.mode === 'proxy' ? dot('ok', '走代理') : dot('warn', '直连')) + tr('最近探活', `${esc(px.code)} · ${px.healthy ? '可用' : '不可用'}`) + tr('代理地址', esc(px.proxy || '未配置')) + tr('探测时间', new Date(px.at).toLocaleString('zh-CN'))
+    : tr('代理状态', '<span class="qqc-sub">读不到 proxy.json</span>');
+  el('proxylog').textContent = (px.log || []).join('\n') || '（还没有 proxy check 记录）';
+
+  el('napcat').innerHTML = tr('容器', esc(d.napcat.container)) + tr('WebUI', dot(d.napcat.webuiUp ? 'ok' : 'bad', d.napcat.webuiUp ? '可达' : '不可达'))
+    + tr('二维码缓存', d.napcat.qr.cached ? `${d.napcat.qr.ageSeconds}s 前（${bytes(d.napcat.qr.bytes)}）` : '未取过');
+
+  const svc = (id, name, state, pid, restarts, risk) => `<tr>
+    <td><b>${esc(name)}</b><div class="qqc-sub">${esc(id)}</div></td>
+    <td>${dot(['active','running'].includes(state) ? 'ok' : 'bad', state)}</td>
+    <td class="num">${esc(pid || '-')}</td>
+    <td class="num">${esc(restarts || '0')}</td>
+    <td class="qqc-sub">${esc(risk)}</td>
+    <td class="act"><button class="qqc-btn ghost sm" onclick="svcAction('${esc(id)}','restart')">重启</button>${id === 'dsh-web' ? ` <button class="qqc-btn danger sm" onclick="svcAction('${esc(id)}','stop')">停止</button>` : ''}</td>
+  </tr>`;
+  if (!d.services) { el('services').innerHTML = ''; }
 }
+let systemCache = null;
 async function loadSystem() {
   const res = await fetch('/api/system');
   if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/status'); return; }
   const d = await res.json();
+  systemCache = d;
   el('envPath').textContent = d.envFile;
-  el('services').innerHTML = d.services.map((s) => `
-    <div class="row"><span><b>${esc(s.name)}</b><div class="muted">${esc(s.id)} · ${esc(s.risk)}</div></span>
-      <span class="v">
-        <span class="pill ${['active','running'].includes(s.state) ? 'up' : 'down'}">${esc(s.state)}</span>
-        <span class="muted">PID ${esc(s.pid || '-')} · 重启 ${esc(s.restarts || '0')} 次</span>
-        <button class="ghost" onclick="svc('${esc(s.id)}','restart')">重启</button>
-        ${s.id === 'dsh-web' ? `<button class="ghost" onclick="svc('${esc(s.id)}','stop')">停止</button>` : ''}
-      </span></div>`).join('');
-  el('params').innerHTML = d.params.map((p) => `
-    <div class="row"><span>${esc(p.label)}<div class="muted">${esc(p.key)}${p.missing ? ' · 当前用的是默认值' : ''}${p.min !== null ? ` · 范围 ${p.min}~${p.max}` : ''}</div></span>
-      <span class="v"><input data-pkey="${esc(p.key)}" value="${esc(p.value)}" style="width:220px"></span></div>`).join('');
-  el('sysLogs').textContent = [...d.logs.watchdog.slice(-25), '', '--- 重启日志 ---', ...d.logs.restart]
-    .concat(['', '--- 事故流水 ---', ...d.logs.incidents.map((i) => `${new Date(i.at).toLocaleString('zh-CN')} ${i.kind} ${i.detail}`)]).join('\n');
+  el('services').innerHTML = d.services.map((s) => `<tr>
+      <td><b>${esc(s.name)}</b><div class="qqc-sub">${esc(s.id)}</div></td>
+      <td>${dot(['active','running'].includes(s.state) ? 'ok' : 'bad', s.state)}</td>
+      <td class="num">${esc(s.pid || '-')}</td>
+      <td class="num">${esc(s.restarts || '0')}</td>
+      <td class="qqc-sub">${esc(s.risk)}</td>
+      <td class="act"><button class="qqc-btn ghost sm" onclick="svcAction('${esc(s.id)}','restart')">重启</button>${s.id === 'dsh-web' ? ` <button class="qqc-btn danger sm" onclick="svcAction('${esc(s.id)}','stop')">停止</button>` : ''}</td>
+    </tr>`).join('');
+  el('params').innerHTML = d.params.map((p) => `<div class="qqc-field">
+      <div><div class="lab">${esc(p.label)}</div><div class="hint">${esc(p.key)}${p.min !== null ? ` · ${p.min}~${p.max}` : ''}${p.missing ? ' · 当前用默认值' : ''}</div></div>
+      <div><input class="qqc-in" data-pkey="${esc(p.key)}" value="${esc(p.value)}"></div>
+    </div>`).join('');
+  el('logWatchdog').textContent = (d.logs.watchdog || []).slice(-25).join('\n') || '（空）';
+  el('logRestart').textContent = (d.logs.restart || []).join('\n') || '（空）';
+  el('logIncidents').textContent = (d.logs.incidents || []).map((i) => `${new Date(i.at).toLocaleString('zh-CN')}  ${i.kind}  ${i.detail}`).join('\n') || '（无）';
 }
 async function ensureSudo() {
-  const r = await fetch('/api/session').then((x) => x.json());
-  if (r.sudo) return true;
+  const s = await fetch('/api/session').then((r) => r.json());
+  if (s.sudo) return true;
   const pw = window.prompt('危险操作需要确认密码（5 分钟内有效）');
   if (!pw) return false;
-  const res = await fetch('/api/reauth', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) });
-  const d = await res.json();
-  if (!d.ok) { alert(d.error || '密码不对'); return false; }
+  const d = await fetch('/api/reauth', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) }).then((r) => r.json());
+  if (!d.ok) { el('svcMsg').className = 'qqc-msg err'; el('svcMsg').textContent = d.error || '密码不对'; return false; }
   return true;
 }
-async function svc(id, action) {
+async function svcAction(id, action) {
   if (!(await ensureSudo())) return;
-  const res = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, action }) });
-  const d = await res.json();
-  alert(d.ok ? `${id} 已执行 ${action}` : `失败：${d.error}`);
+  const d = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id, action }) }).then((r) => r.json());
+  el('svcMsg').className = 'qqc-msg ' + (d.ok ? 'ok' : 'err');
+  el('svcMsg').textContent = d.ok ? `${id} 已执行 ${action}` : `失败：${d.error}`;
   setTimeout(loadSystem, 1500);
 }
 async function saveSystem() {
   if (!(await ensureSudo())) return;
   const values = {};
   for (const node of el('params').querySelectorAll('[data-pkey]')) values[node.dataset.pkey] = node.value;
-  const res = await fetch('/api/system/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) });
-  const d = await res.json();
-  if (!d.ok) { el('sysMsg').textContent = '失败：' + d.error; return; }
-  el('sysMsg').textContent = `已写入 ${d.changed.join(', ')}${d.rejected?.length ? `（跳过 ${d.rejected.join(', ')}）` : ''}，备份 ${d.backup}`;
-  const r2 = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dsh-watchdog', action: 'restart' }) });
-  const d2 = await r2.json();
-  el('sysMsg').textContent += d2.ok ? ' · 看门狗已重启，参数已生效' : ` · 看门狗重启失败：${d2.error}`;
+  const r = await fetch('/api/system/config', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) }).then((x) => x.json());
+  if (!r.ok) { el('sysMsg').className = 'qqc-msg err'; el('sysMsg').textContent = '失败：' + r.error; return; }
+  const r2 = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dsh-watchdog', action: 'restart' }) }).then((x) => x.json());
+  el('sysMsg').className = 'qqc-msg ' + (r2.ok ? 'ok' : 'err');
+  el('sysMsg').textContent = `已写入 ${r.changed.join(', ')}${r.rejected?.length ? `（跳过 ${r.rejected.join(', ')}）` : ''}` + (r2.ok ? ' · 看门狗已重启，参数生效' : ` · 看门狗重启失败：${r2.error}`);
   setTimeout(loadSystem, 1500);
 }
 refresh();
 loadQr();
 loadSystem();
-setInterval(loadSystem, 20000);
 setInterval(refresh, 5000);
-setInterval(() => loadQr(), 30000);
+setInterval(loadSystem, 30000);
+setInterval(loadQr, 30000);
 </script>
 </body>
 </html>

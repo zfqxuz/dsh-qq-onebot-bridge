@@ -4,81 +4,60 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>插件管理</title>
+<link rel="stylesheet" href="/console.css">
 <style>
-  :root { color-scheme: dark; --bg:#0f1216; --panel:#171b21; --panel2:#1d222a; --line:#28303b; --fg:#e8ecf1; --muted:#8a94a3; --accent:#3b82f6; --ok:#16a34a; --off:#6b7280; --danger:#dc2626; }
-  * { box-sizing:border-box; }
-  body { margin:0; font:14px/1.5 system-ui,-apple-system,"Noto Sans CJK SC",sans-serif; background:var(--bg); color:var(--fg); }
-  header { display:flex; align-items:center; gap:14px; padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:10; }
-  header h1 { font-size:16px; margin:0; font-weight:600; }
-  header .links { margin-left:auto; display:flex; gap:14px; }
-  header a { color:#93c5fd; text-decoration:none; font-size:13px; }
-  main { padding:20px; max-width:1180px; margin:0 auto; }
-  .bar { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
-  .bar .grow { flex:1; }
-  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:6px 12px; cursor:pointer; font-size:13px; }
-  button.ghost { background:var(--panel2); border:1px solid var(--line); color:var(--fg); }
-  button.danger { background:var(--danger); }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); font-size:13px; }
-  th { background:var(--panel2); color:var(--muted); font-weight:500; }
-  tr:last-child td { border-bottom:none; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
-  .on { background:rgba(22,163,74,.18); color:#4ade80; border:1px solid rgba(22,163,74,.4); }
-  .off { background:rgba(107,114,128,.18); color:#9ca3af; border:1px solid rgba(107,114,128,.4); }
-  .bad { background:rgba(220,38,38,.18); color:#f87171; border:1px solid rgba(220,38,38,.4); }
-  .muted { color:var(--muted); font-size:12px; }
-  td .actions { display:flex; gap:6px; justify-content:flex-end; }
-  .modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:50; }
-  .modal.open { display:flex; }
-  .sheet { background:var(--panel); border:1px solid var(--line); border-radius:10px; width:min(720px,92vw); max-height:86vh; display:flex; flex-direction:column; }
-  .sheet header { position:static; background:var(--panel2); border-radius:10px 10px 0 0; }
-  .sheet .body { padding:16px 20px; overflow:auto; }
-  .sheet footer { padding:12px 20px; border-top:1px solid var(--line); display:flex; gap:8px; justify-content:flex-end; background:var(--panel2); border-radius:0 0 10px 10px; }
-  .field { margin-bottom:12px; }
-  .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
-  .field input[type=text], .field input[type=number], .field input[type=password], .field select { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:7px 9px; font-size:13px; }
-  .field .hint { font-size:11px; color:var(--muted); margin-top:3px; }
-  .switch { display:flex; align-items:center; gap:8px; }
-  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  .ok { color:#4ade80; } .err { color:#f87171; }
-  pre { background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:10px; overflow:auto; max-height:200px; font-size:12px; }
+  /* 插件页沿用 console.css 的设计语言；这里只补它自己的少量结构样式 */
+  .qqc-table td .actions { display:flex; gap:6px; justify-content:flex-end; }
+  .qqc-table td .actions button { padding:4px 10px; font-size:12px; }
+  .qqc-badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .qqc-badge.on { background:rgba(49,196,141,.14); color:#4ddba6; border:1px solid rgba(49,196,141,.35); }
+  .qqc-badge.off { background:rgba(120,133,154,.14); color:#9aa7b8; border:1px solid rgba(120,133,154,.35); }
+  .qqc-badge.bad { background:rgba(240,97,109,.14); color:#f8868f; border:1px solid rgba(240,97,109,.35); }
+  .qqc-badge.kind { background:rgba(76,141,255,.12); color:#8fb6ff; border:1px solid rgba(76,141,255,.3); }
+  .qqc-sheet .field { margin-bottom:14px; }
+  .qqc-sheet .field label { display:block; font-size:12px; color:var(--muted); margin-bottom:5px; }
+  .qqc-sheet .field .hint { font-size:11px; color:var(--muted); margin-top:4px; }
+  .qqc-sheet .field input, .qqc-sheet .field select { width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line2); border-radius:8px; padding:8px 10px; font-size:13px; font-family:var(--mono); }
+  .qqc-switch { display:flex; align-items:center; gap:8px; }
+  .qqc-pre { background:#090c11; border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow:auto; max-height:200px; font:12px/1.6 var(--mono); color:#c7d2e0; white-space:pre-wrap; }
+  details summary { cursor:pointer; color:var(--fg2); font-size:13px; }
 </style>
 </head>
-<body>
-<header>
-  <h1>插件管理</h1>
-  <span class="muted" id="rootInfo"></span>
-  <div class="links">
+<body class="qqc">
+<div class="qqc-top"><div class="qqc-top-in">
+  <span class="qqc-title">插件管理</span>
+  <span class="qqc-sub" id="rootInfo"></span>
+  <nav>
     <a id="navStatus" href="/status">状态台</a>
     <a id="navAcl" href="/">权限与语料</a>
-  </div>
-</header>
-<main>
+    <a href="#" onclick="doLogout();return false">退出</a>
+  </nav>
+</div></div>
+<div class="qqc-wrap">
   <div class="bar">
-    <button onclick="openInstall()">安装插件</button>
-    <button class="ghost" onclick="load()">刷新</button>
+    <button onclick="openInstall()" class="qqc-btn">安装插件</button>
+    <button class="ghost" onclick="load()" class="qqc-btn ghost">刷新</button>
     <span class="grow"></span>
-    <span class="muted" id="summary"></span>
+    <span class="qqc-sub" id="summary"></span>
   </div>
-  <table>
+  <section class="qqc-card" style="padding:0;overflow:hidden"><table class="qqc-table">
     <thead><tr><th>插件</th><th>来源</th><th>版本</th><th>状态</th><th>配置字段</th><th style="text-align:right">操作</th></tr></thead>
     <tbody id="rows"></tbody>
-  </table>
-  <p class="muted" style="margin-top:14px">说明：改动写入 ~/.dsh/cordis.patch.yml（自动备份）。启用/禁用/配置/装卸都需要重启宿主（或 profile 热重载）后生效。密钥字段留空表示"不修改"。</p>
-</main>
+  </table></section>
+  <p class="qqc-sub" style="margin-top:14px">说明：改动写入 ~/.dsh/cordis.patch.yml（自动备份）。启用/禁用/配置/装卸都需要重启宿主（或 profile 热重载）后生效。密钥字段留空表示"不修改"。</p>
+</div>
 
-<div class="modal" id="mdConfig"><div class="sheet">
-  <header><h1 id="cfgTitle">配置</h1></header>
+<div class="qqc-modal" id="mdConfig"><div class="qqc-sheet">
+  <header><h3 id="cfgTitle">配置</h3></header>
   <div class="body">
     <div id="cfgFields"></div>
-    <details><summary class="muted">查看脱敏后的原始配置</summary><pre id="cfgRaw"></pre></details>
+    <details><summary class="qqc-sub">查看脱敏后的原始配置</summary><div class="qqc-pre" id="cfgRaw"></div></details>
   </div>
-  <footer><button class="ghost" onclick="closeModal('mdConfig')">取消</button><button onclick="saveConfig()">保存</button></footer>
+  <div class="foot"><button class="ghost" onclick="closeModal('mdConfig')">取消</button><button onclick="saveConfig()" class="qqc-btn">保存</button></div>
 </div></div>
 
-<div class="modal" id="mdInstall"><div class="sheet">
-  <header><h1>安装插件</h1></header>
+<div class="qqc-modal" id="mdInstall"><div class="qqc-sheet">
+  <header><h1>安装插件</h3></header>
   <div class="body">
     <div class="field">
       <label>本地插件目录（/home/zfq 下，需含 package.json 与入口）</label>
@@ -86,15 +65,15 @@
       <div class="hint">列表来自 ~/dev/dsh-plugins；已安装的会标注。也可以直接输入绝对路径：</div>
       <input type="text" id="candPath" placeholder="/home/zfq/dev/dsh-plugins/xxx" style="margin-top:6px">
     </div>
-    <div id="installMsg" class="muted"></div>
+    <div id="installMsg" class="qqc-sub"></div>
   </div>
-  <footer><button class="ghost" onclick="closeModal('mdInstall')">取消</button><button onclick="doInstall()">安装</button></footer>
+  <div class="foot"><button class="ghost" onclick="closeModal('mdInstall')">取消</button><button onclick="doInstall()" class="qqc-btn">安装</button></div>
 </div></div>
 
-<div class="modal" id="mdConfirm"><div class="sheet" style="width:min(520px,92vw)">
-  <header><h1 id="confirmTitle">确认</h1></header>
+<div class="qqc-modal" id="mdConfirm"><div class="qqc-sheet" style="width:min(520px,92vw)">
+  <header><h3 id="confirmTitle">确认</h3></header>
   <div class="body"><div id="confirmBody"></div></div>
-  <footer><button class="ghost" onclick="closeModal('mdConfirm')">取消</button><button class="danger" id="confirmOk">确认</button></footer>
+  <div class="foot"><button class="ghost" onclick="closeModal('mdConfirm')">取消</button><button class="danger" id="confirmOk">确认</button></div>
 </div></div>
 
 <script>
@@ -102,6 +81,7 @@ const q = () => '';
 const el = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 navStatus.href = '/status'; navAcl.href = '/';
+async function doLogout() { await fetch('/api/logout', { method: 'POST' }); location.href = '/login'; }
 let current = null;
 
 async function api(path, body) {
@@ -123,15 +103,15 @@ async function load() {
   el('summary').textContent = `${d.plugins.filter(p => p.kind === 'local').length} 个本地插件 · ${d.plugins.filter(p => p.kind === 'bundle').length} 个内置/依赖`;
   el('rows').innerHTML = d.plugins.map((p) => `
     <tr>
-      <td><b>${esc(p.id)}</b><div class="muted">${esc(p.name)}</div></td>
-      <td><div>${esc(p.kind === 'bundle' ? '内置/依赖' : '本地插件')}</div><div class="muted">${esc(p.source)}</div></td>
+      <td><b>${esc(p.id)}</b><div class="qqc-sub">${esc(p.name)}</div></td>
+      <td><div>${esc(p.kind === 'bundle' ? '内置/依赖' : '本地插件')}</div><div class="qqc-sub">${esc(p.source)}</div></td>
       <td>${esc(p.version || '-')}</td>
-      <td>${p.broken ? '<span class="pill bad">断链</span>' : (p.enabled ? '<span class="pill on">启用</span>' : '<span class="pill off">禁用</span>')}</td>
-      <td>${p.fieldCount || '<span class="muted">—</span>'}</td>
+      <td>${p.broken ? '<span class="qqc-badge bad">断链</span>' : (p.enabled ? '<span class="qqc-badge on">启用</span>' : '<span class="qqc-badge off">禁用</span>')}</td>
+      <td>${p.fieldCount || '<span class="qqc-sub">—</span>'}</td>
       <td><div class="actions">
-        ${p.kind === 'local' ? `<button class="ghost" onclick="openConfig('${esc(p.id)}')">配置</button>
-        <button class="ghost" onclick="toggle('${esc(p.id)}', ${!p.enabled})">${p.enabled ? '禁用' : '启用'}</button>
-        <button class="danger" onclick="uninstall('${esc(p.id)}')">卸载</button>` : '<span class="muted">由 profile 管理</span>'}
+        ${p.kind === 'local' ? `<button class="ghost" onclick="openConfig('${esc(p.id)}')" class="qqc-btn ghost">配置</button>
+        <button class="qqc-btn ghost" onclick="toggle('${esc(p.id)}', ${!p.enabled})">${p.enabled ? '禁用' : '启用'}</button>
+        <button class="qqc-btn danger" onclick="uninstall('${esc(p.id)}')">卸载</button>` : '<span class="qqc-sub">由 profile 管理</span>'}
       </div></td>
     </tr>`).join('');
 }
@@ -144,18 +124,18 @@ async function openConfig(id) {
   el('cfgFields').innerHTML = d.fields.map((f) => {
     const hint = [f.desc, f.secret && f.hasValue ? '已设置（留空＝不修改）' : ''].filter(Boolean).join(' · ');
     let input = `<input type="${f.type === 'number' ? 'number' : (f.secret ? 'password' : 'text')}" data-key="${esc(f.key)}" value="${esc(f.value)}" placeholder="${f.secret && f.hasValue ? '已设置，留空不改' : ''}">`;
-    if (f.type === 'bool') input = `<div class="switch"><input type="checkbox" data-key="${esc(f.key)}" ${String(f.value) === 'true' ? 'checked' : ''}> <span class="muted">开 / 关</span></div>`;
+    if (f.type === 'bool') input = `<div class="switch"><input type="checkbox" data-key="${esc(f.key)}" ${String(f.value) === 'true' ? 'checked' : ''}> <span class="qqc-sub">开 / 关</span></div>`;
     if (f.type === 'select') input = `<select data-key="${esc(f.key)}">${(f.options || []).map((o) => `<option ${String(f.value) === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
-    return `<div class="field"><label>${esc(f.label)} <span class="muted">(${esc(f.key)})</span></label>${input}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</div>`;
-  }).join('') || '<p class="muted">这个插件没有可配置字段。</p>';
+    return `<div class="field"><label>${esc(f.label)} <span class="qqc-sub">(${esc(f.key)})</span></label>${input}${hint ? `<div class="hint">${esc(hint)}</div>` : ''}</div>`;
+  }).join('') || '<p class="qqc-sub">这个插件没有可配置字段。</p>';
   // sshKey 的指纹 / 连通性快捷操作
   const keyField = d.fields.find((f) => f.key === 'sshKey');
   if (keyField) {
     el('cfgFields').insertAdjacentHTML('beforeend', `
       <div class="field"><label>SSH Key 工具</label>
-        <button class="ghost" onclick="fp()">查指纹</button>
-        <button class="ghost" onclick="ssh()">测试连接</button>
-        <pre id="keyOut"></pre>
+        <button class="ghost" onclick="fp()" class="qqc-btn ghost sm">查指纹</button>
+        <button class="ghost" onclick="ssh()" class="qqc-btn ghost sm">测试连接</button>
+        <div class="qqc-pre" id="keyOut"></div>
       </div>`);
   }
   el('cfgRaw').textContent = d.redacted;
@@ -193,7 +173,7 @@ async function toggle(id, enabled) {
   alert(`${enabled ? '已启用' : '已禁用'} ${id}\n${r.note}`); load();
 }
 async function uninstall(id) {
-  confirmSheet('卸载插件', `<p>要从配置里移除 <b>${esc(id)}</b> 吗？</p><p class="muted">会同时删掉 ~/.dsh/plugins 下的软链；源目录不会删。</p>`, async () => {
+  confirmSheet('卸载插件', `<p>要从配置里移除 <b>${esc(id)}</b> 吗？</p><p class="qqc-sub">会同时删掉 ~/.dsh/plugins 下的软链；源目录不会删。</p>`, async () => {
     const r = await api('/api/plugins/uninstall', { id, removeLink: true });
     alert(r.ok ? `已卸载 ${id}（备份：${r.backup}）\n${r.note}` : '失败：' + r.error); load();
   });
@@ -209,7 +189,7 @@ async function doInstall() {
   if (!source) return alert('选一个目录或填绝对路径');
   el('installMsg').textContent = '安装中…';
   const r = await api('/api/plugins/install', { source });
-  el('installMsg').innerHTML = r.ok ? `<span class="ok">已安装 ${esc(r.id)}</span><div class="muted">${esc(r.note)}</div><pre>${esc(r.link)}</pre>` : `<span class="err">失败：${esc(r.error)}</span>`;
+  el('installMsg').innerHTML = r.ok ? `<span class="ok">已安装 ${esc(r.id)}</span><div class="qqc-sub">${esc(r.note)}</div><pre>${esc(r.link)}</pre>` : `<span class="err">失败：${esc(r.error)}</span>`;
   if (r.ok) load();
 }
 load();
