@@ -100,6 +100,8 @@
 const q = (s) => (s || '').replace(/^&/, '');
 const el = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+function setHtml(id, html) { const n = el(id); if (n && n.innerHTML !== html) n.innerHTML = html; }
+function setText(id, text) { const n = el(id); if (n && n.textContent !== text) n.textContent = text; }
 function tr(k, v) { return `<tr><td class="qqc-k">${esc(k)}</td><td class="qqc-v">${v}</td></tr>`; }
 function dot(state, text, detail = '') {
   return `<span class="qqc-dot ${state}"><i></i><span>${esc(text)}</span></span>${detail ? ` <span class="qqc-sub">${esc(detail)}</span>` : ''}`;
@@ -138,39 +140,48 @@ async function refresh() {
   v.lastElementChild.textContent = healthy ? '全部正常' : '有组件异常';
   el('stamp').textContent = new Date(d.at).toLocaleString('zh-CN');
 
-  const tile = (label, ok, text, detail) => `<div class="qqc-tile"><div class="lab">${esc(label)}</div><div class="val">${dot(ok ? 'ok' : 'bad', text)}</div><div class="det">${esc(detail)}</div></div>`;
-  el('tiles').innerHTML = tile('DSH 宿主', p.dshUsable, p.dshUsable ? '可用' : '不可用', `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`)
-    + tile('QQ 桥接', p.bridgeUsable, p.bridgeUsable ? '可用' : '不可用', `pid ${d.bridge.pid ?? '-'} · 会话 ${d.bridge.sessionCount ?? '-'}`)
-    + tile('NapCat', p.napcatUsable, p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`)
-    + tile('代理', d.proxy.healthy !== false, d.proxy.mode === 'proxy' ? '走代理' : '直连', `${d.proxy.code || '-'} · ${d.proxy.proxy || '未配置'}`);
+  const tiles = [
+    ['DSH 宿主', p.dshUsable, p.dshUsable ? '可用' : '不可用', `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`],
+    ['QQ 桥接', p.bridgeUsable, p.bridgeUsable ? '可用' : '不可用', `pid ${d.bridge.pid ?? '-'} · 会话 ${d.bridge.sessionCount ?? '-'}`],
+    ['NapCat', p.napcatUsable, p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`],
+    ['代理', d.proxy.healthy !== false, d.proxy.mode === 'proxy' ? '走代理' : '直连', `${d.proxy.code || '-'} · ${d.proxy.proxy || '未配置'}`],
+  ];
+  if (!el('tiles').dataset.built) {
+    el('tiles').innerHTML = tiles.map(([label], i) => `<div class="qqc-tile"><div class="lab">${esc(label)}</div><div class="val"><span id="tile-${i}" class="qqc-dot"><i></i><span id="tile-${i}-text"></span></span></div><div class="det" id="tile-${i}-det"></div></div>`).join('');
+    el('tiles').dataset.built = '1';
+  }
+  tiles.forEach(([, ok, text, detail], i) => {
+    const node = el(`tile-${i}`); if (node) node.className = 'qqc-dot ' + (ok ? 'ok' : 'bad');
+    setText(`tile-${i}-text`, text); setText(`tile-${i}-det`, detail);
+  });
 
-  el('system').innerHTML = tr('负载', (d.system.load || []).join(' / '))
+  setHtml('system', tr('负载', (d.system.load || []).join(' / '))
     + tr('内存', d.system.memory ? `${d.system.memory.usedPercent}%（可用 ${bytes(d.system.memory.availableBytes)}）` : '?')
     + tr('磁盘', d.system.disk ? `${d.system.disk.usedPercent}%（可用 ${bytes(d.system.disk.freeBytes)}）` : '?')
-    + tr('开机时长', dur(d.system.uptimeSeconds));
-  el('versions').textContent = `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`;
+    + tr('开机时长', dur(d.system.uptimeSeconds)));
+  setText('versions', `node ${d.system.node} · dsh ${d.system.dsh} · 桥接 ${d.system.bridge} · napcat ${d.system.napcatImage}`);
 
-  el('ports').innerHTML = tr('DSH WebUI 3080', dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`))
+  setHtml('ports', tr('DSH WebUI 3080', dot(p.dshUsable ? 'ok' : (p.dshPortOpen ? 'warn' : 'bad'), p.dshUsable ? '可用' : (p.dshPortOpen ? '端口通但无响应' : '不可用'), `HTTP ${p.dshProbe.code || '-'} · ${p.dshProbe.ms}ms`))
     + tr('QQ 桥接 6700', dot(p.bridgeUsable ? 'ok' : (p.bridgePortOpen ? 'warn' : 'bad'), p.bridgeUsable ? '可用' : '不可用', p.bridgePortOpen ? '端口在听' : '端口未监听'))
-    + tr('NapCat WebUI 6099', dot(p.napcatUsable ? 'ok' : (p.napcatWebuiPortOpen ? 'warn' : 'bad'), p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`));
+    + tr('NapCat WebUI 6099', dot(p.napcatUsable ? 'ok' : (p.napcatWebuiPortOpen ? 'warn' : 'bad'), p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`)));
 
-  el('docker').innerHTML = (d.docker.containers || []).map((c) => tr(c.name, dot(c.running ? (c.healthy || !/healthy/.test(c.status) ? 'ok' : 'warn') : 'bad', c.running ? (c.healthy ? 'healthy' : '运行中') : '未运行', c.status))).join('') || '<tr><td class="qqc-empty">docker 不可用</td></tr>';
+  setHtml('docker', (d.docker.containers || []).map((c) => tr(c.name, dot(c.running ? (c.healthy || !/healthy/.test(c.status) ? 'ok' : 'warn') : 'bad', c.running ? (c.healthy ? 'healthy' : '运行中') : '未运行', c.status))).join('') || '<tr><td class="qqc-empty">docker 不可用</td></tr>');
 
   const b = d.bridge;
-  el('bridge').innerHTML = b.available
+  setHtml('bridge', b.available
     ? tr('宿主 PID', esc(b.pid)) + tr('版本 / 运行', `${esc(b.version)} · ${dur(b.uptimeSeconds)}`) + tr('会话数', b.sessionCount)
       + tr('待处理入群', b.joinsPending) + tr('提醒 / 投票 / 游戏', `${b.reminders} / ${b.votes} / ${b.games}`) + tr('能力门拒绝', b.gateDenied)
-    : tr('状态文件', '<span class="qqc-sub">读不到 runtime.json</span>');
-  el('traces').textContent = (b.recentTraces || []).map((t) => `${t.id}  ${t.chatKey || ''}  ${t.durationMs || 0}ms  [${(t.stages || []).join(' > ')}]`).join('\n') || '（暂无）';
+    : tr('状态文件', '<span class="qqc-sub">读不到 runtime.json</span>'));
+  setText('traces', (b.recentTraces || []).map((t) => `${t.id}  ${t.chatKey || ''}  ${t.durationMs || 0}ms  [${(t.stages || []).join(' > ')}]`).join('\n') || '（暂无）');
 
   const px = d.proxy;
-  el('proxy').innerHTML = px.available
+  setHtml('proxy', px.available
     ? tr('当前模式', px.mode === 'proxy' ? dot('ok', '走代理') : dot('warn', '直连')) + tr('最近探活', `${esc(px.code)} · ${px.healthy ? '可用' : '不可用'}`) + tr('代理地址', esc(px.proxy || '未配置')) + tr('探测时间', new Date(px.at).toLocaleString('zh-CN'))
-    : tr('代理状态', '<span class="qqc-sub">读不到 proxy.json</span>');
-  el('proxylog').textContent = (px.log || []).join('\n') || '（还没有 proxy check 记录）';
+    : tr('代理状态', '<span class="qqc-sub">读不到 proxy.json</span>'));
+  setText('proxylog', (px.log || []).join('\n') || '（还没有 proxy check 记录）');
 
-  el('napcat').innerHTML = tr('容器', esc(d.napcat.container)) + tr('WebUI', dot(d.napcat.webuiUp ? 'ok' : 'bad', d.napcat.webuiUp ? '可达' : '不可达'))
-    + tr('二维码缓存', d.napcat.qr.cached ? `${d.napcat.qr.ageSeconds}s 前（${bytes(d.napcat.qr.bytes)}）` : '未取过');
+  setHtml('napcat', tr('容器', esc(d.napcat.container)) + tr('WebUI', dot(d.napcat.webuiUp ? 'ok' : 'bad', d.napcat.webuiUp ? '可达' : '不可达'))
+    + tr('二维码缓存', d.napcat.qr.cached ? `${d.napcat.qr.ageSeconds}s 前（${bytes(d.napcat.qr.bytes)}）` : '未取过'));
 
   const svc = (id, name, state, pid, restarts, risk) => `<tr>
     <td><b>${esc(name)}</b><div class="qqc-sub">${esc(id)}</div></td>
@@ -189,21 +200,23 @@ async function loadSystem() {
   const d = await res.json();
   systemCache = d;
   el('envPath').textContent = d.envFile;
-  el('services').innerHTML = d.services.map((s) => `<tr>
+  setHtml('services', d.services.map((s) => `<tr>
       <td><b>${esc(s.name)}</b><div class="qqc-sub">${esc(s.id)}</div></td>
       <td>${dot(['active','running'].includes(s.state) ? 'ok' : 'bad', s.state)}</td>
       <td class="num">${esc(s.pid || '-')}</td>
       <td class="num">${esc(s.restarts || '0')}</td>
       <td class="qqc-sub">${esc(s.risk)}</td>
       <td class="act"><button class="qqc-btn ghost sm" onclick="svcAction('${esc(s.id)}','restart')">重启</button>${s.id === 'dsh-web' ? ` <button class="qqc-btn danger sm" onclick="svcAction('${esc(s.id)}','stop')">停止</button>` : ''}</td>
-    </tr>`).join('');
-  el('params').innerHTML = d.params.map((p) => `<div class="qqc-field">
+    </tr>`).join(''));
+  // 参数表：用户改过或正在输入时不动它（否则 60 秒一次的重建会把输入清掉/页面跳走）
+  const paramsDirty = [...el('params').querySelectorAll('[data-pkey]')].some((n) => n.dataset.dirty === '1' || n === document.activeElement);
+  if (!paramsDirty) setHtml('params', d.params.map((p) => `<div class="qqc-field">
       <div><div class="lab">${esc(p.label)}</div><div class="hint">${esc(p.key)}${p.min !== null ? ` · ${p.min}~${p.max}` : ''}${p.missing ? ' · 当前用默认值' : ''}</div></div>
       <div><input class="qqc-in" data-pkey="${esc(p.key)}" value="${esc(p.value)}"></div>
-    </div>`).join('');
-  el('logWatchdog').textContent = (d.logs.watchdog || []).slice(-25).join('\n') || '（空）';
-  el('logRestart').textContent = (d.logs.restart || []).join('\n') || '（空）';
-  el('logIncidents').textContent = (d.logs.incidents || []).map((i) => `${new Date(i.at).toLocaleString('zh-CN')}  ${i.kind}  ${i.detail}`).join('\n') || '（无）';
+    </div>`).join(''));
+  setText('logWatchdog', (d.logs.watchdog || []).slice(-25).join('\n') || '（空）');
+  setText('logRestart', (d.logs.restart || []).join('\n') || '（空）');
+  setText('logIncidents', (d.logs.incidents || []).map((i) => `${new Date(i.at).toLocaleString('zh-CN')}  ${i.kind}  ${i.detail}`).join('\n') || '（无）');
 }
 async function ensureSudo() {
   const s = await fetch('/api/session').then((r) => r.json());
@@ -229,15 +242,16 @@ async function saveSystem() {
   if (!r.ok) { el('sysMsg').className = 'qqc-msg err'; el('sysMsg').textContent = '失败：' + r.error; return; }
   const r2 = await fetch('/api/system/service', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: 'dsh-watchdog', action: 'restart' }) }).then((x) => x.json());
   el('sysMsg').className = 'qqc-msg ' + (r2.ok ? 'ok' : 'err');
+  for (const n of el('params').querySelectorAll('[data-pkey]')) n.dataset.dirty = '0';
   el('sysMsg').textContent = `已写入 ${r.changed.join(', ')}${r.rejected?.length ? `（跳过 ${r.rejected.join(', ')}）` : ''}` + (r2.ok ? ' · 看门狗已重启，参数生效' : ` · 看门狗重启失败：${r2.error}`);
   setTimeout(loadSystem, 1500);
 }
 refresh();
 loadQr();
 loadSystem();
-setInterval(refresh, 5000);
-setInterval(loadSystem, 30000);
-setInterval(loadQr, 30000);
+setInterval(refresh, 10000);
+setInterval(loadSystem, 60000);
+setInterval(loadQr, 60000);
 </script>
 </body>
 </html>
