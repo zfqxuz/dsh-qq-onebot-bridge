@@ -22,6 +22,7 @@ import { readSystemPage, saveSystemConfig, serviceAction } from './system-page.m
 import { installPlugin, keyFingerprint, listPlugins, pluginDetail, savePluginConfig, setPluginEnabled, sshTest, uninstallPlugin } from './plugin-manager.mjs'
 import { dshHome, isUnderAllowedRoot, profileName, restartScript } from './paths.mjs'
 import { readIdentity, saveIdentity } from './identity-page.mjs'
+import { probeGithubToken, readSystemConfig as readSystemSettings, saveSystemConfig as saveSystemSettings } from './system-config.mjs'
 
 const MAX_BODY = 256 * 1024
 
@@ -338,6 +339,14 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
       res.end(identityHtml)
       return
     }
+    if (url.pathname === '/system' || url.pathname === '/system.html') {
+      const systemHtml = existsSync(new URL('../system-ui.html', import.meta.url))
+        ? readFileSync(new URL('../system-ui.html', import.meta.url), 'utf8')
+        : '<!doctype html><meta charset="utf-8"><h1>系统配置</h1><p>缺少 control/system-ui.html</p>'
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(systemHtml)
+      return
+    }
     if (url.pathname === '/status' || url.pathname === '/status.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       res.end(statusHtml)
@@ -463,6 +472,25 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
         host: String(body.host ?? ''), user: String(body.user ?? ''),
         port: Number(body.port ?? 22) || 22, keyPath: String(body.keyPath ?? ''),
       }))
+    }
+    // ---- [round5] 系统配置：gh 凭据 / git 身份 / DSH 工作区（容器启动时渲染生效）----
+    if (req.method === 'GET' && url.pathname === '/api/system/settings') {
+      return json(res, 200, readSystemSettings())
+    }
+    if (req.method === 'POST' && url.pathname === '/api/system/settings') {
+      if (!sessions.hasSudo(sid)) return json(res, 403, { ok: false, error: '改系统配置需要 sudo：先 POST /api/reauth 校验登录密码（5 分钟内有效）' })
+      const body = (await readBody(req)) ?? {}
+      const values = { ...body }
+      let probeWarning = ''
+      // 填了 token 却没填账号名：顺手问一下 GitHub 这是谁（问不到也不拦保存）
+      if (typeof values.githubToken === 'string' && values.githubToken.trim() !== '' && String(values.githubLogin ?? '').trim() === '') {
+        const probe = await probeGithubToken({ host: String(values.githubHost ?? 'github.com'), token: values.githubToken })
+        if (probe.ok && probe.login) values.githubLogin = probe.login
+        else if (!probe.ok) probeWarning = `token 没能校验通过（${probe.error}）—— 已按你填的保存，可用 gh auth status 复核`
+      }
+      const result = saveSystemSettings({ values, user: session?.user ?? '' })
+      if (probeWarning) result.warnings = [...(result.warnings ?? []), probeWarning]
+      return json(res, result.ok ? 200 : 400, result)
     }
     if (req.method === 'GET' && url.pathname === '/api/system') {
       return json(res, 200, await readSystemPage())

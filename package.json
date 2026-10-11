@@ -1,6 +1,6 @@
 {
   "name": "dsh-qq-onebot-bridge",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "QQ ↔ DeepSeek Harness agent bridge over OneBot v11 (reverse WebSocket). v0.5.x \"See it, find it\": merged-forward chat records are expanded for the model instead of being dropped, group member/roster and group-info queries, recent-history and emoji-reaction agent tools, group file listing and download, group albums, image OCR, and a keyword-searchable per-day message archive (/找) — plus the whole v0.4 debugging stack (trace id on every message, a Chinese reason on every silent drop, structured JSONL events, live SSE event stream with per-message decision chains, one-click diagnosis, diagnostic-bundle export, offline sandboxed dry-run replay and event injection, a 6-hard-constraint acceptance page) and a standalone control console (control/). Independent bundle; remove anytime: dsh plugin --profile web remove dsh-qq-onebot-bridge",
   "type": "module",
   "main": "lib/index.js",
@@ -18,7 +18,7 @@
   "scripts": {
     "control": "node control/bin/qq-control.mjs",
     "test": "node test/control-unit.mjs",
-    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs",
+    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs && node test/system-config-unit.mjs",
     "test:persona": "node test/persona-unit.mjs",
     "test:group-role": "node test/group-role-unit.mjs",
     "test:acl": "node test/acl-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-gates-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs",
@@ -33,7 +33,8 @@
     "test:enforce": "node test/acl-enforcement-unit.mjs",
     "test:corpus": "node test/corpus-unit.mjs",
     "seed": "node control/bin/qq-seed.mjs",
-    "test:identity": "node test/identity-seed-unit.mjs"
+    "test:identity": "node test/identity-seed-unit.mjs",
+    "test:system-config": "node test/system-config-unit.mjs"
   },
   "exports": {
     ".": "./lib/index.js",

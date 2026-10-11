@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>系统配置</title>
+<link rel="stylesheet" href="/console.css">
+<style>
+  .qqc-in, .qqc-sel { background:var(--bg); color:var(--fg); border:1px solid var(--line2); border-radius:8px; padding:7px 9px; font-size:13px; font-family:var(--mono); }
+  .qqc-in:focus, .qqc-sel:focus { outline:2px solid rgba(88,166,255,.55); outline-offset:1px; border-color:transparent; }
+  .qqc-in { width:260px; }
+  .qqc-note { border-left:3px solid var(--line2); padding:8px 12px; margin:0 0 14px; }
+  .qqc-note.warn { border-left-color:#d29922; background:rgba(210,153,34,.08); }
+  .qqc-note.bad { border-left-color:#f0616d; background:rgba(240,97,109,.08); }
+  .qqc-note.ok { border-left-color:#31c48d; background:rgba(49,196,141,.07); }
+  .qqc-badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .qqc-badge.on { background:rgba(49,196,141,.14); color:#4ddba6; border:1px solid rgba(49,196,141,.35); }
+  .qqc-badge.off { background:rgba(120,133,154,.14); color:#9aa7b8; border:1px solid rgba(120,133,154,.35); }
+  .row { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-end; margin-bottom:12px; }
+  .row > div { display:flex; flex-direction:column; gap:6px; }
+  .hint { font-size:12px; color:var(--fg3); }
+  code.path { font-family:var(--mono); font-size:12px; }
+</style>
+</head>
+<body class="qqc">
+<div class="qqc-top"><div class="qqc-top-in">
+  <span class="qqc-title">系统配置</span>
+  <span class="qqc-sub" id="whoami"></span>
+  <nav>
+    <a href="/status">状态台</a>
+    <a href="/identity">身份</a>
+    <a href="/plugins">插件</a>
+    <a href="/">权限与语料</a>
+    <a href="#" onclick="doLogout();return false">退出</a>
+    <button class="qqc-btn ghost sm" onclick="load()">刷新</button>
+  </nav>
+</div></div>
+
+<div class="qqc-wrap">
+  <div id="banner"></div>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">Git / GitHub</h2>
+    <p class="qqc-sub" style="margin-bottom:12px">
+      这是<b>你自己账号的配置</b>，存在数据卷里（<code class="path" id="cfgPath"></code>），换镜像不丢。
+      gh 只装二进制、不带任何凭据 —— 装完第一件事就是来这里填自己的，填完容器里 <code>gh</code> 与 <code>git push</code> 直接可用。
+    </p>
+    <div class="row">
+      <div>
+        <label class="qqc-sub">git 用户名（user.name）</label>
+        <input id="gitName" class="qqc-in" placeholder="例如 zfqxuz">
+      </div>
+      <div>
+        <label class="qqc-sub">git 邮箱（user.email）</label>
+        <input id="gitEmail" class="qqc-in" placeholder="you@example.com 或 GitHub 的 noreply 邮箱">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label class="qqc-sub">GitHub 主机</label>
+        <input id="ghHost" class="qqc-in" style="width:180px" placeholder="github.com">
+      </div>
+      <div>
+        <label class="qqc-sub">账号名（login）</label>
+        <input id="ghLogin" class="qqc-in" style="width:180px" placeholder="留空则在保存时自动识别">
+      </div>
+      <div style="flex:1;min-width:280px">
+        <label class="qqc-sub">Personal Access Token（只写不读）</label>
+        <input id="ghToken" class="qqc-in" type="password" style="width:100%" placeholder="ghp_… / github_pat_…（留空 = 不改动已保存的）">
+      </div>
+    </div>
+    <div class="qqc-switch" style="margin:2px 0 10px">
+      <input type="checkbox" id="clearToken"> <span class="qqc-sub">清除已保存的 token</span>
+    </div>
+    <div class="hint" id="tokenState"></div>
+    <p class="qqc-sub" style="margin-top:10px">
+      保存后会渲染成 <code class="path" id="ghPath"></code>（0600），并顺带写好 git 凭据助手
+      （<code>credential.helper = !gh auth git-credential</code>），所以容器里 <code>git clone/push</code> 私有仓库不用再输密码。
+      Token 需要 <b>repo</b> 权限；要看/触发 CI 再加 <b>workflow</b>。
+    </p>
+  </section>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">DSH 工作区</h2>
+    <p class="qqc-sub" style="margin-bottom:12px">
+      DSH 的会话、你让助手写的代码都落在这里。<b>可写范围</b>由部署时的 <code>QQ_WORKSPACE_ROOT</code> 决定
+      （当前：<code class="path" id="wsRoot"></code>），范围内的目录都能直接绑，容器启动时会实测可写 —— 只读的不会被采用。
+    </p>
+    <div class="row">
+      <div style="flex:1;min-width:320px">
+        <label class="qqc-sub">工作区路径（宿主绝对路径）</label>
+        <input id="wsPath" class="qqc-in" style="width:100%" placeholder="例如 /home/you/projects/bot">
+      </div>
+    </div>
+    <div id="wsState"></div>
+  </section>
+
+  <section class="qqc-card">
+    <h2 class="qqc-h">容器启动时的渲染结果</h2>
+    <p class="qqc-sub" style="margin-bottom:10px">
+      每次启动 harness 都会按上面的配置渲染一遍（只补缺、不覆盖手改过的值）。下面是最近一次的真实结果：
+    </p>
+    <table class="qqc-table" id="reportTable">
+      <thead><tr><th>项目</th><th>动作</th><th>说明</th></tr></thead>
+      <tbody id="reportRows"><tr><td colspan="3" class="qqc-sub">还没有渲染报告（harness 尚未用新版本启动过）</td></tr></tbody>
+    </table>
+    <div id="volumeState" class="hint" style="margin-top:10px"></div>
+  </section>
+
+  <div class="bar">
+    <button class="qqc-btn" onclick="save()">保存</button>
+    <span class="grow"></span>
+    <span class="qqc-sub" id="msg"></span>
+  </div>
+  <p class="qqc-sub" id="audit"></p>
+</div>
+
+<script>
+const el = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+let state = null;
+
+async function doLogout() { await fetch('/api/logout', { method: 'POST' }); location.href = '/login'; }
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (res.status === 401) { location.href = '/login?next=' + encodeURIComponent('/system'); return { ok: false, error: '未登录' }; }
+  return res.json();
+}
+async function ensureSudo() {
+  const s = await fetch('/api/session').then((r) => r.json());
+  if (s.sudo) return true;
+  const pw = window.prompt('改系统配置需要确认登录密码（5 分钟内有效）');
+  if (!pw) return false;
+  const d = await fetch('/api/reauth', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: pw }) }).then((r) => r.json());
+  if (!d.ok) { setMsg('err', d.error || '密码不对'); return false; }
+  return true;
+}
+function setMsg(kind, text) { const n = el('msg'); n.className = 'qqc-sub ' + (kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : ''); n.textContent = text; }
+function setBanner(kind, html) { el('banner').innerHTML = `<div class="qqc-note ${kind}">${html}</div>`; }
+function badge(on, onText, offText) { return `<span class="qqc-badge ${on ? 'on' : 'off'}">${esc(on ? onText : offText)}</span>`; }
+
+function fill(d) {
+  state = d;
+  const c = d.config || {};
+  el('cfgPath').textContent = d.configFile;
+  el('ghPath').textContent = (d.volume?.ghHosts?.file) || d.configFile.replace(/config\/system\.json$/, '.config/gh/hosts.yml');
+  el('wsRoot').textContent = d.workspace?.root || '（未设置）';
+  el('gitName').value = c.git?.userName || '';
+  el('gitEmail').value = c.git?.userEmail || '';
+  el('ghHost').value = c.github?.host || 'github.com';
+  el('ghLogin').value = c.github?.login || '';
+  el('ghToken').value = '';
+  el('clearToken').checked = false;
+  el('tokenState').textContent = c.github?.tokenSet
+    ? `已保存的 token：${c.github.tokenHint}（留空即保持不变）`
+    : '还没有保存 token（gh 处于未登录状态，属于出厂状态）';
+
+  const ws = d.workspace || {};
+  el('wsPath').value = ws.desired || '';
+  const rows = [
+    ['当前挂载（.env）', ws.actual || '（未设置）'],
+    ['系统配置里写的', ws.desired || '（未配置 = 用挂载值）'],
+    ['本次实际采用', ws.effective || '（未知）'],
+  ].map(([k, v]) => `<tr><td class="qqc-sub" style="width:160px">${esc(k)}</td><td><code class="path">${esc(v)}</code></td></tr>`).join('');
+  const pendingNote = ws.pending
+    ? `<div class="qqc-note warn" style="margin-top:10px">配置值与实际采用的不一致：${esc(ws.reason || '')}<br>${esc(ws.applyHint || '')} <button class="qqc-btn ghost sm" onclick="copyHint()">复制命令</button></div>`
+    : `<div class="qqc-note ok" style="margin-top:10px">当前采用的路径可写，配置与实际一致。</div>`;
+  el('wsState').innerHTML = `<table class="qqc-table">${rows}</table>${pendingNote}`;
+
+  const r = d.report;
+  if (r) {
+    const line = (name, o) => `<tr><td>${esc(name)}</td><td>${badge(o?.action && !String(o.action).startsWith('error'), o?.action || '-', o?.action || '-')}</td><td class="qqc-sub">${esc(o?.detail || '')}</td></tr>`;
+    el('reportRows').innerHTML = [
+      line('git 身份', r.git),
+      line('git 凭据助手', r.credential),
+      line('gh 凭据', r.gh),
+      `<tr><td>工作区</td><td>${badge(!r.workspace?.pending, '一致', '待生效')}</td><td class="qqc-sub">${esc(r.workspace?.reason || '')}</td></tr>`,
+    ].join('');
+  }
+  const v = d.volume || {};
+  const gitTxt = v.gitconfig?.exists ? `git 身份已落盘：${esc(v.gitconfig.name || '-')} / ${esc(v.gitconfig.email || '-')}` : '数据卷里还没有 .gitconfig';
+  const ghTxt = v.ghHosts?.exists
+    ? `gh 凭据已落盘：${(v.ghHosts.hosts || []).map((h) => `${esc(h.host)}(${esc(h.login || '?')}, ${esc(h.tokenHint || '无 token')})`).join('、')} mode=${esc(v.ghHosts.mode || '?')}`
+    : '数据卷里还没有 gh hosts.yml';
+  el('volumeState').innerHTML = `${gitTxt}<br>${ghTxt}`;
+  el('audit').textContent = (d.audit || []).length
+    ? '最近改动：' + d.audit.map((a) => `${new Date(a.at).toLocaleString()} ${a.user || '-'} ${(a.changed || []).join('/')}`).join(' ｜ ')
+    : '';
+
+  const tokenOk = c.github?.tokenSet && (v.ghHosts?.hosts || []).some((h) => h.hasToken);
+  const gitOk = c.git?.userName && c.git?.userEmail;
+  if (tokenOk || gitOk) {
+    setBanner('ok', `已配置：${[gitOk && `git 身份（${esc(c.git.userName)}）`, tokenOk && `gh 凭据（${esc(c.github.login || '?')}）`].filter(Boolean).join(' · ')}`);
+  } else {
+    setBanner('warn', '<b>未配置：容器里 gh 与 git 身份都还是空的。</b><br>填上 git 用户名/邮箱与 GitHub token，保存后容器里就能直接 gh / git push（出厂状态不带任何凭据，这是有意的）。');
+  }
+}
+window.copyHint = async () => {
+  const cmd = state?.workspace?.applyHint || '';
+  const m = /(cd .*|docker compose .*)/.exec(cmd);
+  const text = m ? m[0] : cmd;
+  try { await navigator.clipboard.writeText(text); setMsg('ok', '命令已复制'); } catch { setMsg('', text); }
+};
+async function load() {
+  const d = await api('/api/system/settings');
+  if (!d.ok) { setBanner('bad', esc(d.error || '读取失败')); return; }
+  fill(d);
+}
+async function save() {
+  if (!(await ensureSudo())) return;
+  setMsg('', '保存中…');
+  const token = el('ghToken').value.trim();
+  const body = {
+    gitUserName: el('gitName').value.trim(),
+    gitUserEmail: el('gitEmail').value.trim(),
+    githubHost: el('ghHost').value.trim() || 'github.com',
+    githubLogin: el('ghLogin').value.trim(),
+    workspacePath: el('wsPath').value.trim(),
+  };
+  if (token !== '') body.githubToken = token;
+  if (el('clearToken').checked) body.clearGithubToken = true;
+  const r = await api('/api/system/settings', body);
+  if (!r.ok) { setMsg('err', `保存失败：${r.error || '未知错误'}`); return; }
+  const warn = (r.warnings || []).length ? ` ｜ 提示：${r.warnings.join('；')}` : '';
+  const apply = r.apply ? ` ｜ 渲染：git=${r.apply.git?.action} gh=${r.apply.gh?.action}` : '';
+  setMsg('ok', `已保存：${(r.changed || []).join(', ')}${apply}。备份：${r.backup || '（首次写入）'}${warn}`);
+  await load();
+}
+load();
+</script>
+</body>
+</html>
