@@ -96,7 +96,7 @@ function workspaceState(config, report) {
   const desired = str(config.workspace.path)
   const eff = str(report?.workspace?.effective) || actual
   const pending = desired !== '' && desired !== eff
-  const composeHint = 'cd <部署目录> && docker compose up -d harness'
+  const composeHint = '在宿主机上执行：cd <部署目录> && docker compose up -d harness'
   return {
     actual,
     root,

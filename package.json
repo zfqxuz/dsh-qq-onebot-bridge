@@ -1,6 +1,6 @@
 {
   "name": "@zfqxuz/dsh-qq-onebot-bridge",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "QQ ↔ DeepSeek Harness agent bridge over OneBot v11 (reverse WebSocket)：把 QQ 群/私聊接到 DSH agent，自带权限（RBAC）、可视化控制台与可回放调试",
   "type": "module",
   "main": "lib/index.js",

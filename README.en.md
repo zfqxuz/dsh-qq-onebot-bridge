@@ -7,7 +7,7 @@ Puts QQ inside DeepSeek Harness (DSH below): QQ messages drive DSH agent session
 [![dsh](https://img.shields.io/badge/dsh-0.1%20%7C%200.2-6f42c1.svg)](package.json)
 [![onebot](https://img.shields.io/badge/OneBot-v11-black.svg)](https://github.com/botuniverse/onebot-11)
 
-[中文](README.md) · [Changelog](CHANGELOG.md) · [Local patches](LOCAL-PATCH.md) · current version v0.7.4
+[中文](README.md) · [Changelog](CHANGELOG.md) · [Local patches](LOCAL-PATCH.md) · current version v0.7.5
 
 ## What it solves
 
@@ -255,6 +255,6 @@ This project is **derived from** [cheesehaqi/dsh-qq-onebot-bridge](https://githu
 
 ## Links
 
-- [CHANGELOG.md](CHANGELOG.md) — per-release record and defect lists (currently v0.7.4); [LOCAL-PATCH.md](LOCAL-PATCH.md) — local changes, persona / identity / workspace notes
+- [CHANGELOG.md](CHANGELOG.md) — per-release record and defect lists (currently v0.7.5); [LOCAL-PATCH.md](LOCAL-PATCH.md) — local changes, persona / identity / workspace notes
 - [examples/cordis.patch.example.yml](examples/cordis.patch.example.yml) — full configuration example
 - [NapCat docs](https://doc.napneko.icu/) · [OneBot v11 specification](https://github.com/botuniverse/onebot-11); Deployment package [zfqxuz/qqbot-deploy](https://github.com/zfqxuz/qqbot-deploy) (Docker / one-line host install; includes `HOST-INSTALL.md` and `UPDATE-UNINSTALL.md`)
