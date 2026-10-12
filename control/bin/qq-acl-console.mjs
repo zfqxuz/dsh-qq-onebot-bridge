@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { spawn } from 'node:child_process'
 import { createAclToken, startAclConsole } from '../lib/acl-console.mjs'
+import { openAclStore } from '../../lib/acl-store.js'
 import { resolvePath } from '../lib/paths.mjs'
 import { statusDefaults } from '../lib/status-page.mjs'
 
@@ -26,9 +27,31 @@ const stateFile = join(dataRoot, 'state', 'acl-console.json')
 const dbFile = argOf('file', join(dataRoot, 'config', 'acl.db'))
 const port = Number(argOf('port', '0')) || 8798
 
+// [fix 2026-10-12] 库不存在时不再当场退出。真机踩到：全新 Windows 装完，控制台 8798 打不开
+//   （ERR_CONNECTION_REFUSED）——库没建、控制台就退出，而库要桥接启动时才建，谁先谁后不确定；
+//   更糟的是"起不来 → 没法在界面里建库 → 永远起不来"的死锁。现在两级自愈：
+//   1) 先等桥接建库（桥接按 aclBootstrap 建库时会从 identity / adminUsers 导入分配）；
+//   2) 等不到就自己按内置角色建一个，并明确提醒"自建库不导入配置里的分配，请在主体分配页核对"。
 if (!existsSync(dbFile)) {
-  console.error(`ACL 库不存在：${dbFile}\n先初始化：npm run acl -- init --file ${dbFile}`)
-  process.exit(2)
+  const waitMs = Number(process.env.QQ_ACL_WAIT_MS ?? 120000)
+  const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 120000)
+  console.error(`ACL 库不存在：${dbFile} —— 等桥接建库（最多 ${Math.round((Number.isFinite(waitMs) ? waitMs : 120000) / 1000)} 秒）…`)
+  while (!existsSync(dbFile) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 1000))
+  if (!existsSync(dbFile)) {
+    mkdirSync(dirname(dbFile), { recursive: true })
+    const store = openAclStore(dbFile)
+    try {
+      const perms = store.syncPermissions()
+      const roles = store.seedBuiltinRoles()
+      store.audit({ actor: 'console-bootstrap', action: 'init', target: dbFile, after: { permissions: perms, roles } })
+      console.error(`等不到桥接，已按内置角色自建库：${dbFile}（权限点 ${perms} 个，内置角色 ${roles} 个）`)
+      console.error('⚠ 自建库不含配置里的身份分配（identity / adminUsers）：升级老机器时请到「主体分配」页核对一次。')
+    } finally {
+      store.close()
+    }
+  } else {
+    console.error('桥接已建库，继续启动控制台。')
+  }
 }
 
 let state = { token: '', port }

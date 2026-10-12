@@ -18,7 +18,7 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, lstatSync, readlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { dshHome, pluginSources, profileName } from '../lib/paths.mjs'
+import { dshHome, pluginSources, profileName, resolvePath } from '../lib/paths.mjs'
 import { appendBlock, findBlock, findConfigLine, findSection, hasKey, setScalar } from '../lib/patch-edit.mjs'
 
 /** 本仓库根（镜像里是 /app/bridge，宿主上是仓库目录）——由脚本位置推导，不写死。 */
@@ -65,6 +65,10 @@ const BRIDGE_SEED_LINES = [
   '  botQq: 0',
   '  acceptPrivate: true',
   '  replyOnlyWhenMentioned: true',
+  '  # [#权限模型] 权限库（<数据根>/config/acl.db）是控制台 8798 的启动前提；',
+  '  # 库不存在时按下面的 identity / adminUsers 建库并导入一次（幂等，之后走库）。',
+  '  aclEnabled: true',
+  '  aclBootstrap: true',
   '  identity:',
   '    enabled: true',
   '    map: {}',
@@ -182,6 +186,35 @@ if (existsSync(markerFile)) {
   writeText(homePatch, `${homeLines.join('\n').replace(/\n+$/, '')}\n`)
 
   if (!DRY) writeFileSync(markerFile, `seeded ${VERSION} at ${new Date().toISOString()}\n`)
+}
+
+// ---------- 3.5) 权限库不存在时补 aclEnabled / aclBootstrap（不受播种标记约束） ----------
+// [fix 2026-10-12] 真机踩到：全新 Windows 装完，控制台 8798 一点就"拒绝连接"。
+//   原因：控制台启动前要求 <数据根>/config/acl.db 存在（不存在就退出），而库是桥接按 aclBootstrap 建的；
+//   出厂配置里没这两行 → 没人建库 → 控制台起不来，也没入口去建库（死锁）。
+//   上面那段内容写入被 .seeded-<版本> 标记挡着（老安装升级时不会重跑），所以这里单独补一次。
+//   仍然只"补缺"：库已存在（用户自己在用）或键已存在（用户自己配过）一律不碰。
+{
+  const dataRoot = valueOf('--data-root', '') || resolvePath('QQ_DATA_ROOT', [join(process.env.USERPROFILE || process.env.HOME || '.', 'qqbot')])
+  const aclFile = join(dataRoot, 'config', 'acl.db')
+  if (existsSync(aclFile)) {
+    note(kept, 'acl.db（已存在：不动 aclEnabled / aclBootstrap）')
+  } else {
+    const profilePatchFile = join(profileDir, 'cordis.patch.yml')
+    const lines = readText(profilePatchFile).split('\n')
+    const bridgeBlock = lines.length > 0 ? findBlock(lines, 'dsh-qq-onebot-bridge') : null
+    if (bridgeBlock) {
+      const configLine = findConfigLine(lines, bridgeBlock)
+      let changed = false
+      for (const [key, raw] of [['aclEnabled', 'true'], ['aclBootstrap', 'true']]) {
+        if (hasKey(lines, bridgeBlock, key)) { note(kept, key); continue }
+        setScalar(lines, bridgeBlock, configLine, key, raw)
+        note(seeded, key)
+        changed = true
+      }
+      if (changed) writeText(profilePatchFile, `${lines.join('\n').replace(/\n+$/, '')}\n`)
+    }
+  }
 }
 
 // ---------- 报告 ----------
