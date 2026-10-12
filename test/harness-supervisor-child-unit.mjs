@@ -57,6 +57,9 @@ const sup = spawn(process.execPath, [
   env: {
     ...process.env,
     QQ_HARNESS_STATE_DIR: registry,
+    // 显式定死模式/身份：这类端到端测试不能再继承运行环境的 QQ_HARNESS_*（
+    // 本机容器里就带着 QQ_HARNESS_MODE=container-only，会让"让位"对照项永远不触发）。
+    QQ_HARNESS_MODE: 'auto', QQ_HARNESS_KIND: 'container',
     QQ_TAKEOVER_T1_SECONDS: '1', QQ_TAKEOVER_T2_SECONDS: '2',
     QQ_MIN_HOLD_SECONDS: '1', QQ_HARNESS_POLL_SECONDS: '1',
   },
