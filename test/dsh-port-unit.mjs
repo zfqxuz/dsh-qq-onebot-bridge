@@ -29,7 +29,7 @@ check('带 token 的地址也能取', lastUrlPort('http://127.0.0.1:3099/?token=
 
 // ===== 2. cmdline 解析 =====
 check('NUL 分隔的 --port 3081',
-  parseDshCmdline(nul('/home/zfq/node24/bin/node', '/usr/local/lib/node_modules/@deepseek-ai/dsh/bin.js', 'web', '--no-open', '--port', '3081'))?.port === 3081)
+  parseDshCmdline(nul('/home/user/node24/bin/node', '/usr/local/lib/node_modules/@deepseek-ai/dsh/bin.js', 'web', '--no-open', '--port', '3081'))?.port === 3081)
 check('--port=3082', parseDshCmdline(nul('node', 'dsh', 'web', '--port=3082'))?.port === 3082)
 check('-p 3083', parseDshCmdline(nul('node', 'dsh', 'web', '-p', '3083'))?.port === 3083)
 check('没有 web 子命令 → null', parseDshCmdline(nul('node', 'something-else', '--port', '3081')) === null)

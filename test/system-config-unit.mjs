@@ -33,9 +33,9 @@ const newDir = (name) => { const d = mkdtempSync(join(tmp, `${name}-`)); return 
 
 // ---------- A. hosts.yml 解析 ----------
 {
-  const real = ['github.com:', '    users:', '        zfqxuz:', '            oauth_token: gho_abc123', '    git_protocol: https', '    oauth_token: gho_abc123', '    user: zfqxuz', ''].join('\n')
+  const real = ['github.com:', '    users:', '        octocat:', '            oauth_token: gho_abc123', '    git_protocol: https', '    oauth_token: gho_abc123', '    user: octocat', ''].join('\n')
   const parsed = parseGhHosts(real)
-  check('hosts.yml 解析：host 段 token/user', parsed['github.com']?.token === 'gho_abc123' && parsed['github.com']?.user === 'zfqxuz')
+  check('hosts.yml 解析：host 段 token/user', parsed['github.com']?.token === 'gho_abc123' && parsed['github.com']?.user === 'octocat')
   const round = parseGhHosts(renderGhHosts({ host: 'github.com', login: 'someone', token: 'ghp_xyz' }))
   check('hosts.yml 渲染→解析 往返一致', round['github.com']?.token === 'ghp_xyz' && round['github.com']?.user === 'someone')
 }
@@ -51,21 +51,21 @@ const newDir = (name) => { const d = mkdtempSync(join(tmp, `${name}-`)); return 
   check('空配置：不产生 .gitconfig / hosts.yml', !existsSync(base.gitConfigFile) && !existsSync(join(base.ghDir, 'hosts.yml')))
 
   // B2 给了 git 身份 → 写入；再跑一次 → 保留
-  const cfgGit = { git: { userName: 'zfqxuz', userEmail: 'zfqxuz@users.noreply.github.com' } }
+  const cfgGit = { git: { userName: 'octocat', userEmail: 'octocat@users.noreply.github.com' } }
   const r2 = applySystemConfig({ ...base, config: cfgGit })
   const gitText = readFileSync(base.gitConfigFile, 'utf8')
-  check('git 身份：首次写入', r2.git.action === 'seeded' && gitText.includes('zfqxuz') && gitText.includes('noreply'))
+  check('git 身份：首次写入', r2.git.action === 'seeded' && gitText.includes('octocat') && gitText.includes('noreply'))
   const r3 = applySystemConfig({ ...base, config: cfgGit })
   check('git 身份：第二次保留（不重复写）', r3.git.action === 'kept')
 
   // B3 用户手改过的身份不被覆盖
-  const edited = gitText.replace('zfqxuz@users.noreply.github.com', 'me@example.com')
+  const edited = gitText.replace('octocat@users.noreply.github.com', 'me@example.com')
   writeFileSync(base.gitConfigFile, edited)
   applySystemConfig({ ...base, config: { git: { userName: 'OTHER', userEmail: 'other@example.com' } } })
   check('git 身份：用户手改过 → 一个字不动', readFileSync(base.gitConfigFile, 'utf8') === edited)
 
   // B4 gh 凭据：写入 0600 + 第二次保留
-  const cfgGh = { github: { host: 'github.com', login: 'zfqxuz', token: 'ghp_testtoken1234567890' } }
+  const cfgGh = { github: { host: 'github.com', login: 'octocat', token: 'ghp_testtoken1234567890' } }
   const r4 = applySystemConfig({ ...base, config: cfgGh })
   const hostsFile = join(base.ghDir, 'hosts.yml')
   const mode = (statSync(hostsFile).mode & 0o777).toString(8)
@@ -92,7 +92,7 @@ const newDir = (name) => { const d = mkdtempSync(join(tmp, `${name}-`)); return 
   const r8 = applySystemConfig({
     home: devHome, gitConfigFile: join(devHome, '.gitconfig'), ghDir: join(devHome, '.config', 'gh'),
     workspaceActual: '/tmp/ws',
-    config: { git: { userName: 'zfqxuz', userEmail: 'z@example.com' }, github: cfgGh.github },
+    config: { git: { userName: 'octocat', userEmail: 'z@example.com' }, github: cfgGh.github },
     externalGit: true, externalGh: true,
   })
   check('开发模式：git/gh 都 skipped-external', r8.git.action === 'skipped-external' && r8.gh.action === 'skipped-external')
@@ -132,8 +132,8 @@ const newDir = (name) => { const d = mkdtempSync(join(tmp, `${name}-`)); return 
 
   const saved = sc.saveSystemConfig({
     values: {
-      gitUserName: 'zfqxuz', gitUserEmail: 'zfqxuz@users.noreply.github.com',
-      githubHost: 'github.com', githubLogin: 'zfqxuz', githubToken: 'ghp_console1234567890',
+      gitUserName: 'octocat', gitUserEmail: 'octocat@users.noreply.github.com',
+      githubHost: 'github.com', githubLogin: 'octocat', githubToken: 'ghp_console1234567890',
       workspacePath: process.env.QQ_WORKSPACE,
     },
     user: 'tester',
@@ -144,7 +144,7 @@ const newDir = (name) => { const d = mkdtempSync(join(tmp, `${name}-`)); return 
   check('控制台：读接口只回掩码（无 token 原文）',
     !JSON.stringify(read1).includes('ghp_console1234567890') && read1.config.github.tokenHint.startsWith('ghp_'))
   check('控制台：数据卷里真的落了 gh 凭据', read1.volume.ghHosts.exists === true && read1.volume.ghHosts.mode === '600')
-  check('控制台：数据卷里真的落了 git 身份', read1.volume.gitconfig.exists === true && read1.volume.gitconfig.name === 'zfqxuz')
+  check('控制台：数据卷里真的落了 git 身份', read1.volume.gitconfig.exists === true && read1.volume.gitconfig.name === 'octocat')
 
   // 校验：范围外的工作区必须被拒
   const outside = sc.saveSystemConfig({ values: { workspacePath: '/etc/somewhere' }, user: 'tester' })

@@ -46,15 +46,15 @@
      `ctx.get('agentPresets') ?? ctx.agentPresets` 取注册表，避免某个 DSH 版本不暴露属性时静默跳过；
      成功/失败都会写 `qq-bridge-debug.log` 便于诊断。
 - 已存在会话创建时工具集已固化，修复后需重启宿主并续接会话（`#resumeSession` 现在会补 mount）或 `/new`。
-- 2026-10-08 验证：启用注入 dry-run，向 `u:2493922172` 注入消息触发 resume；日志出现
+- 2026-10-08 验证：启用注入 dry-run，向 `u:<你的QQ号>` 注入消息触发 resume；日志出现
   `mounted preset qq-coding -> {"id":"qq-coding"}`，随后真实请求的工具表从 17 个变为 24 个，
   新增 `bash/read/write/edit/glob/grep/read_image`，agent 本地 `cat qq-sessions.json` 成功。
 
 ## QQ 用户 → 角色身份映射（只读访客模式）（2026-10-08，用户要求）
 
-需求：QQ 号映射到角色身份；`2493922172` → owner（zfq 全权限）；其余（含群聊）→ 共用 guest 只读；
+需求：QQ 号映射到角色身份；`<你的QQ号>` → owner（全权限）；其余（含群聊）→ 共用 guest 只读；
 guest 不可写、不可执行、不可读 DSH 配置与其他配置文件；guest 对话权限只能只读、不允许申请提权。
-设计文档：`/home/zfq/dshbot/qq/SPEC-identity.md`（已评审 v1.1）。
+设计文档：`SPEC-identity.md`（已评审 v1.1）。
 
 ### 改动文件
 
@@ -93,7 +93,7 @@ guest 不可写、不可执行、不可读 DSH 配置与其他配置文件；gue
      guest 的工具面完全由桥接注入，preset 挂了别的工具也不会泄漏。
    - 第 3 方文件属主/权限：保持 `600`。
 
-4. 目录：`/home/zfq/dshbot/qq-users/qqguest`（`0700`），guest 的 cwd 与唯一可读/可发送根。
+4. 目录：`~/qq-users/qqguest`（`0700`），guest 的 cwd 与唯一可读/可发送根。
 
 ### 未做（与 spec 的偏差，需知悉）
 
@@ -106,7 +106,7 @@ guest 不可写、不可执行、不可读 DSH 配置与其他配置文件；gue
 
 ### 风险
 
-- guest 目录（`qq-users/qqguest`）与桥接同属 zfq，OS 层没有权限边界；隔离完全依赖
+- guest 目录（`qq-users/qqguest`）与桥接同属 宿主用户，OS 层没有权限边界；隔离完全依赖
   工具面收敛 + `restrict({allow:[]})` + 受限读工具。**若将来给 guest 加任何新工具，必须重新评估。**
 - 宿主级工具清单变化（新增危险工具）不会自动被拦：`restrict({allow:[]})` 是白名单式隐藏，
   新工具同样被隐藏，方向是安全的。
@@ -114,13 +114,13 @@ guest 不可写、不可执行、不可读 DSH 配置与其他配置文件；gue
 
 ### 验证方式
 
-- 单测：`cd /home/zfq/dshbot/qq/plugins/dsh-tool-fs-jailed && node test-jail.mjs`（18/18）
+- 单测：`cd ~/qq/plugins/dsh-tool-fs-jailed && node test-jail.mjs`（18/18）
 - 语法：`node --input-type=module --check < lib/bridge.js`
 - 运行时：`qq-bridge-debug.log` 搜 `guest` / `tool surface check` / `SECURITY LEAK`
 
-## 联网搜索权限（2026-10-08，用户要求：普通用户和 zfq 都能联网搜索）
+## 联网搜索权限（2026-10-08，用户要求：普通用户和 宿主用户 都能联网搜索）
 
-需求：owner（zfq）与 guest（普通用户）都具备 `web_search` / `web_fetch`。
+需求：owner（宿主用户）与 guest（普通用户）都具备 `web_search` / `web_fetch`。
 
 ### 改动文件
 1. `~/.dsh/profiles/web/cordis.patch.yml`
@@ -140,7 +140,7 @@ own-layer 注册（桥接注入的 scoped 工具）不受影响。guest 只加 p
 故白名单必须显式包含联网工具；owner 没有 restrict，直接由 preset 提供。
 
 ### 上线与回滚
-- 重启：`nohup bash /home/zfq/dshbot/qq/restart-websearch.sh 90 &`
+- 重启：`nohup bash ~/qq/restart-websearch.sh 90 &`
   （延迟重启让当前回合回复先送达；启动失败自动回滚 patch 与 bridge.js）
 - 已存在会话工具表已固化：owner 会话靠宿主重启后的 `#resumeSession` 重新 mount preset；
   guest 从不 resume，重启后新建会话即为新工具面。也可用 `/new` 强制新会话。
@@ -177,7 +177,7 @@ assistant 的输出照常发回当前 QQ 会话；切工作区的权限不能给
 - `lib/bridge.js`（新增局部逻辑，原有路径不动；备份 `lib/bridge.js.bak-workspace-20261008-232900`）
   1. 新增模块级 `workspaceProjectKey(cwd)`：与
      `@deepseek-ai/dsh-session-persistence-jsonl` 的 `projectKey()` 逐字符同源，
-     把工作区路径编码成 `~/.dsh/sessions/--home-zfq-xxx--` 的目录名。
+     把工作区路径编码成 `~/.dsh/sessions/--home-<用户>-xxx--` 的目录名。
      **改了这里必须同步那边**，否则找不到已有会话。
   2. 构造函数新增：`qq-workspaces.json`（JsonStore）、`sessionRootDir`（默认 `~/.dsh/sessions`）、
      `workspaceRegistryFile`（默认 `~/.dsh/storages/workspace.json`）。
@@ -217,13 +217,13 @@ assistant 的输出照常发回当前 QQ 会话；切工作区的权限不能给
 - 回归：全部 `test/*-unit.mjs` 通过数与改动前一致（commands/settings/privacy/static/control/find/
   insight/unattended 的既有失败逐项比对无变化）。
   跑测试需要能解析 `@deepseek-ai/*`：临时
-  `ln -s /home/zfq/node24/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai \
+  `ln -s <node>/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai \
    node_modules/@deepseek-ai`，跑完记得删掉该软链（避免影响宿主解析）。
 - 真实数据只读核对：5 个登记工作区都能按 projectKey 找到会话目录与最新会话（runGroup 36 条）。
 
 ### 生效方式与回滚
 
-- 代码在宿主重启后生效：`bash /home/zfq/dshbot/qq/restart-dsh.sh`（会中断当前 QQ 会话，随后自动续接）。
+- 代码在宿主重启后生效：`bash ~/qq/restart-dsh.sh`（会中断当前 QQ 会话，随后自动续接）。
 - 回滚：`cp -p lib/bridge.js.bak-workspace-20261008-232900 lib/bridge.js` 后重启宿主；
   绑定状态文件可直接删 `qq-workspaces.json`（删了等于全部退出工作区）。
 
@@ -261,7 +261,7 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 
 ### 生效方式与回滚
 
-- 代码与配置都只在宿主重启后生效：`bash /home/zfq/dshbot/qq/restart-dsh.sh 90`
+- 代码与配置都只在宿主重启后生效：`bash ~/qq/restart-dsh.sh 90`
   （延迟 90s，让当前回合的 QQ 回复先送达；脚本会把自己 setsid 转后台，宿主被杀也不会带走它）。
 - 回滚：`cp -p lib/bridge.js.bak-vision-20261009-021034 lib/bridge.js`、
   `cp -p lib/index.js.bak-vision-20261009-021034 lib/index.js`，
@@ -406,11 +406,11 @@ guest 不需要任何工具也能真正「看见」图（模型 `deepseek-flash`
 
 ### 现象
 用户 "/ws dshbot" 绑了工作区，但浏览器的工作区列表里看不到任何 QQ 会话，
-哪怕这些会话的 `cwd` 就是 `/home/zfq/dshbot`。
+哪怕这些会话的 `cwd` 就是 `/home/宿主用户/dshbot`。
 
 ### 根因（实测数据）
-- 磁盘上 `sessions/--home-zfq-dshbot--/` 有 16 条会话（13 条 `qq-*` + 3 条 `session-*`），
-  header 里 `cwd` 全是 `/home/zfq/dshbot`；
+- 磁盘上 `sessions/--home-宿主用户-dshbot--/` 有 16 条会话（13 条 `qq-*` + 3 条 `session-*`），
+  header 里 `cwd` 全是 `/home/宿主用户/dshbot`；
 - 但 `~/.dsh/storages/workspace.json` 的 `dshbot` 工作区 `sessionIds` **只有那 3 条 `session-*`**；
 - DSH 的工作区列表读的是这份白名单：`WorkspaceEntity.sessionIds` =
   `record.sessionIds.filter(id => sessionPath(id) === workspace.path)`，**不是扫目录**；
@@ -526,7 +526,7 @@ Error: cannot get property "workspaceRegistry" without inject
 ```
 workspaceRegistry resolved … list=function … shapeProbeFailed=
   workspace registry order references missing workspace '864902b6-…'（= dshbot 工作区 id）
-workspace lookup failed for /home/zfq/dshbot:
+workspace lookup failed for /home/宿主用户/dshbot:
   resolveByPath=undefined | list threw: (同上)
 ```
 即：`state.workspaceIds` 有 5 条（含 dshbot），但 `entities` 里缺 dshbot → `list()` 抛。
@@ -649,8 +649,8 @@ watchdog 活在宿主**外面**：宿主死了它没法用 OneBot 发消息（�
    又把运行时上下文一并清空。
 2. **preset 没挂 `agent-instructions`**，且访客 cwd 向上找不到项目根
    预设是自包含插件表：上游 `standard` 预设里有 `agent-instructions`，我们的 QQ 预设没有；
-   而它默认只认 `.git` 作项目根标记，访客 cwd 是 `/home/zfq/dshbot/qq-users/qqguest`，
-   向上没有 `.git` → 根回退成 cwd → `/home/zfq/dshbot/AGENTS.md` **永远加载不到**。
+   而它默认只认 `.git` 作项目根标记，访客 cwd 是 `~/qq-users/qqguest`，
+   向上没有 `.git` → 根回退成 cwd → `~/AGENTS.md` **永远加载不到**。
 
 实测证据：10 个 QQ 会话（owner + guest）的 `system/message` 都只有 46 字节，
 内容就是 `You are a helpful software engineer assistant.`，没有任何规则段 / 指令注入。
@@ -660,7 +660,7 @@ watchdog 活在宿主**外面**：宿主死了它没法用 OneBot 发消息（�
 1. 两个 QQ preset 的 persona 去掉 `complete: true` 和 `includeRuntimeContext: false`，
    底座身份改成中性的一句 `You are a helpful assistant.`（人设改由桥接注入）；
 2. 两个 preset 补挂 `agent-instructions`，并把项目根标记扩成 `['.git', 'AGENTS.md']`，
-   这样访客 cwd 也能向上命中 `/home/zfq/dshbot/AGENTS.md`（已用同规则脚本离线验证）；
+   这样访客 cwd 也能向上命中 `~/AGENTS.md`（已用同规则脚本离线验证）；
 3. 本插件 config 新增 `persona` 块（见下）。
 
 **桥接（`lib/bridge.js`）**
@@ -676,7 +676,7 @@ watchdog 活在宿主**外面**：宿主死了它没法用 OneBot 发消息（�
 ```yaml
 persona:
   enabled: true                     # false = 完全不注入（一键回退到 preset 自带身份）
-  dir: /home/zfq/dshbot/qq/config/persona   # 人设文件目录（可选）
+  dir: ~/qq/config/persona   # 人设文件目录（可选）
   owner: 私聊人设（文件读不到时的兜底）      # 也可短句兜底
   guest: 群聊人设
   extra: 公共追加
@@ -696,7 +696,7 @@ persona:
 `npm run test:session` 全绿：workspace 18 / session-ownership 44 / retention 12 / persona 19。
 
 ### 怎么改人设
-直接编辑 `/home/zfq/dshbot/qq/config/persona/{owner,guest,extra}.md` —— 下一句话生效。
+直接编辑 `~/qq/config/persona/{owner,guest,extra}.md` —— 下一句话生效。
 临时给某个群单独设定：写 `dir/chat-g_<群号>.md`。要整体关掉：`persona.enabled: false`。
 
 ## 开发群：按群升级角色 `identity.groupRoles`（2026-10-09，用户要求）
@@ -725,7 +725,7 @@ identity:
 - 收回：删掉 `groupRoles` 那一行（或改成 `guest`）再重启宿主。
 
 ### 风险（写在这里，别事后才发现）
-- 群里任何人 = 主人：能执行 shell、读写 `/home/zfq/dshbot` 下任何文件、danger-full-access；
+- 群里任何人 = 主人：能执行 shell、读写 `/home/宿主用户/dshbot` 下任何文件、danger-full-access；
 - 群会话多人共享上下文，互相会看到对方的会话历史；
 - 没有 per-sender 粒度；只能靠 `allowGroups` 决定"这个群能不能用机器人"。
 
@@ -828,9 +828,9 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
   （超管 `/clear` 生效 / 访客落到模型、`/handoff` 与 `/ws` 的拒绝文案、群里踢人、deny 覆盖、
   多身份取并集、identity 关闭时两条轴分开），并挂进 `npm run test:session`。
 
-### 追加：DSH 插件能力按权限管控（2026-10-09 21:4x，zfq 纠正后重做）
+### 追加：DSH 插件能力按权限管控（2026-10-09 21:4x，宿主用户 纠正后重做）
 
-zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联网搜索 / ECS·n8n·GH 运维 /
+宿主用户 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联网搜索 / ECS·n8n·GH 运维 /
 会话读取 / 生图），不是 QQ 群管那点权限。上一轮只把 QQ 命令侧收编了，工具面还是写死的
 `role.guest` 分支 —— 这次补上。
 
@@ -1022,7 +1022,7 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
 
 ### 控制台交互重做 + 真浏览器验收（2026-10-10）
 
-**1. 交互：编辑 / 保存 / 取消（zfq 要求：不编辑时不可勾选）**
+**1. 交互：编辑 / 保存 / 取消（宿主用户 要求：不编辑时不可勾选）**
 
 每个可编辑区块（权限矩阵、主体分配、资源授权、限额、语料绑定）都是同一套：
 - 非编辑态：所有输入 **disabled**（点不动），只显示「编辑」
@@ -1044,7 +1044,7 @@ zfq 的纠正：要管的是 **DSH 插件能力**（文件读写 / shell / 联�
 
 **3. 真实浏览器端到端（Playwright + 真 Chromium）**
 
-新增独立小项目 `/home/zfq/dev/console-e2e`（不把 Chromium 依赖塞进零依赖的桥接仓库）：
+新增独立小项目 `/home/宿主用户/dev/console-e2e`（不把 Chromium 依赖塞进零依赖的桥接仓库）：
 - 每条用例同时断言 **界面** 和 **SQLite**，"界面勾了 A 库里存了 B"这类问题才抓得住
 - 覆盖：页面/页签、矩阵编辑保存、带范围权限点、**回归（挂自定义角色 gq 必须存成 gq）**、
   取消不落库、未保存改动守卫、搜索/过滤/分组按钮、资源、限额、语料绑定与预览、生效与审计、能力视角

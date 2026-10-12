@@ -29,14 +29,14 @@ mkdirSync(join(dataRoot, 'state'), { recursive: true })
 function fakeHost(pid, env) {
   const dir = join(procRoot, String(pid))
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'cmdline'), nul('/home/zfq/node24/bin/node', '/home/zfq/node24/bin/dsh', 'web', '--no-open', '--port', '3081'), 'utf8')
+  writeFileSync(join(dir, 'cmdline'), nul('/home/user/node24/bin/node', '/home/user/node24/bin/dsh', 'web', '--no-open', '--port', '3081'), 'utf8')
   writeFileSync(join(dir, 'environ'), env.join('\0') + '\0', 'utf8')
   writeFileSync(join(dir, 'stat'), `${pid} (node) S ${Array.from({ length: 18 }, () => '0').join(' ')} ${pid}\n`, 'utf8')
 }
 function fakeHostNoPort(pid, env, root = procRoot) {
   const dir = join(root, String(pid))
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'cmdline'), nul('/home/zfq/node24/bin/node', '/home/zfq/node24/bin/dsh', 'web', '--no-open'), 'utf8')
+  writeFileSync(join(dir, 'cmdline'), nul('/home/user/node24/bin/node', '/home/user/node24/bin/dsh', 'web', '--no-open'), 'utf8')
   writeFileSync(join(dir, 'environ'), env.join('\0') + '\0', 'utf8')
 }
 
@@ -53,13 +53,13 @@ check('带上宿主 pid', live.pid === 4444)
 const procRoot2 = join(tmp, 'proc-lower')
 const dirTmp = join(procRoot2, '5555')
 mkdirSync(dirTmp, { recursive: true })
-writeFileSync(join(dirTmp, 'cmdline'), nul('node', '/home/zfq/node24/bin/dsh', 'web', '--port', '3081'), 'utf8')
+writeFileSync(join(dirTmp, 'cmdline'), nul('node', '/home/user/node24/bin/dsh', 'web', '--port', '3081'), 'utf8')
 writeFileSync(join(dirTmp, 'environ'), 'http_proxy=http://127.0.0.1:10809\0', 'utf8')
 check('小写 http_proxy 也认', detectHostProxy({ procRoot: procRoot2 }).proxy === 'http://127.0.0.1:10809')
 
 const procRoot3 = join(tmp, 'proc-direct')
 mkdirSync(join(procRoot3, '6666'), { recursive: true })
-writeFileSync(join(procRoot3, '6666', 'cmdline'), nul('node', '/home/zfq/node24/bin/dsh', 'web', '--port', '3081'), 'utf8')
+writeFileSync(join(procRoot3, '6666', 'cmdline'), nul('node', '/home/user/node24/bin/dsh', 'web', '--port', '3081'), 'utf8')
 writeFileSync(join(procRoot3, '6666', 'environ'), 'PATH=/usr/bin\0', 'utf8')
 const liveDirect = detectHostProxy({ procRoot: procRoot3 })
 check('宿主在跑但没代理变量 → 结论是 direct（不是 unknown）', liveDirect.mode === 'direct' && liveDirect.pid === 6666)
