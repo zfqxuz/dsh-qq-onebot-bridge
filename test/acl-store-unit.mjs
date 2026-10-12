@@ -177,10 +177,10 @@ const st3 = openAclStore(dbFile, { create: false })
 st3.db.prepare('INSERT OR REPLACE INTO roles(id, name, description, builtin, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)')
   .run('gq', '群友', '自定义角色', Date.now(), Date.now())
 st3.setRolePermissions('gq', ['cmd.chat', 'cmd.image', 'tool.image.generate'], { actor: 'unit' })
-const assigned = st3.setSubjectRoles('group:134993546', ['gq'], { actor: 'unit' })
+const assigned = st3.setSubjectRoles('group:10001', ['gq'], { actor: 'unit' })
 check('自定义角色挂到主体上原样保存（不再被改写成 guest）', assigned.join(',') === 'gq', JSON.stringify(assigned))
-check('从库里读回来还是 gq', (st3.loadPolicy().assignments['group:134993546'] ?? []).join(',') === 'gq',
-  JSON.stringify(st3.loadPolicy().assignments['group:134993546']))
+check('从库里读回来还是 gq', (st3.loadPolicy().assignments['group:10001'] ?? []).join(',') === 'gq',
+  JSON.stringify(st3.loadPolicy().assignments['group:10001']))
 check('owner 仍然按历史别名映射到 admin',
   st3.setSubjectRoles('user:1001', ['owner'], { actor: 'unit' }).join(',') === 'admin')
 check('认不出的角色被丢掉（fail-closed，不会静默变 guest）',

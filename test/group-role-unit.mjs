@@ -36,7 +36,7 @@ mkdirSync(stateDir, { recursive: true })
 mkdirSync(guestDir, { recursive: true })
 
 const DEV_GROUP = 123456        // 测试用：被整群升级为 owner 的"开发群"
-const OTHER_GROUP = 134993546      // 普通群：必须保持只读
+const OTHER_GROUP = 10001      // 普通群：必须保持只读
 
 class MockServer extends EventEmitter {
   constructor() {
