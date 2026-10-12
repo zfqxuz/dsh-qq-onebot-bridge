@@ -49,3 +49,7 @@ node_modules
 *.swp
 *.swo
 *~
+
+# Windows 风格的"不可写路径"兜底：测试用 `Z:\nope\qq-history` 造失败场景时，
+# 在 POSIX 上整串会变成**一个**目录名（含反斜杠），上面的 `qq-history/` 匹配不到 ⇒ 单独兜。
+Z:*

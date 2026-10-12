@@ -306,6 +306,9 @@ const config2 = Config({
   cwd: stateDir, allowUsers: [1001], acceptPrivate: true, botQq: 999, adminEnabled: false,
   sessionResumeEnabled: true, historyArchiveEnabled: false, memoryEnabled: false,
   sessionClaimRetries: 0, preclaimSessions: false,
+  // [本地补丁 P0] 冲突不再直接失败：这里把回执设为立即、等待上限设长，
+  // 保持本用例的原意（不 fork + 人话提示 + 绑定不变 + trace 有记录）。
+  sessionConflictNoticeSeconds: 0, sessionConflictWaitSeconds: 3600, sessionConflictBackoffSeconds: [3600],
   identity: { enabled: true, map: { 1001: 'owner' }, defaultRole: 'guest', groupRole: 'guest',
     roles: { owner: { preset: 'qq-coding', cwd: stateDir }, guest: { preset: 'qq-readonly', cwd: join(root, 'guest') } } },
 })

@@ -715,13 +715,13 @@ persona:
 identity:
   groupRole: guest              # 默认：所有群仍是只读访客
   groupRoles:                   # 按群覆盖（数字或字符串群号都能对上）
-    "176628359": owner
+    "10001": owner
 ```
 - `roleFor()` 先查 `groupRoles[String(groupId)]`，命中就用它，否则回落到 `groupRole`；
 - **fail-closed**：只认 `owner` / `guest`，其它值（`admin`、`true`、数字…）一律按 guest，
   配置写错不会意外提权；
 - 启动时 `#logDevGroups()` 打一条醒目警告，把"整群 owner"的群号列出来（可审计）：
-  `[本地补丁] 开发群已启用（整群 owner 全权限，群里任何人都等于主人）：176628359`
+  `[本地补丁] 开发群已启用（整群 owner 全权限，群里任何人都等于主人）：10001`
 - 收回：删掉 `groupRoles` 那一行（或改成 `guest`）再重启宿主。
 
 ### 风险（写在这里，别事后才发现）
@@ -882,7 +882,7 @@ danger-full-access 且**不**施加 guest 限制；普通群仍是 qq-readonly +
 
 ### 修：guest 会话的宿主级工具其实一直没被挡住（2026-10-09 23:x，真机日志发现）
 
-- **现象**（真机日志 evidence）：`tool surface g:1062134450: SECURITY LEAK — visible but not granted:
+- **现象**（真机日志 evidence）：`tool surface g:10001: SECURITY LEAK — visible but not granted:
   session_read, context_handoff, ecs_exec, ecs_status, ecs_upload, n8n_status, n8n_deploy_workflow,
   gh_run_list, gh_run_view`。日志里 SECURITY LEAK 从 **2026-10-08** 就一直在报（18 次），
   "自检通过" 一次都没有 —— 也就是说这条漏洞在本次重构之前就存在。

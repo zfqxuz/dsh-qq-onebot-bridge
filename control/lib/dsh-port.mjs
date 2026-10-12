@@ -8,14 +8,20 @@
  *
  * 所以这里不写死端口，而是按"离运行事实有多近"排出候选：
  *   1. 环境变量 QQ_DSH_PORT          —— 显式指定优先（容器/compose 用这条）
- *   2. 控制台配置 qq-control.json    —— ports.host，用户显式设过就算数
- *   3. 正在跑的 dsh 进程             —— /proc/<pid>/cmdline 里的 `dsh web … --port N`
- *   4. 启动器登记的地址              —— <数据根>/state/dsh-web-url.txt
- *   5. 宿主自己打印的地址            —— <数据根>/logs/dsh-web.log（取最后一次）
- *   6. 兜底 3080                     —— 什么都没找到时才用，来源会标明是"默认值"
+ *   2. 正在跑的 harness 容器         —— docker inspect 它的 DSH_PORT（容器模式唯一的"运行事实"：
+ *                                      控制台和宿主是不同 PID 命名空间，/proc 那条扫不到）
+ *   3. 控制台配置 qq-control.json    —— ports.host，用户显式设过就算数
+ *   4. 正在跑的 dsh 进程             —— /proc/<pid>/cmdline 里的 `dsh web … --port N`（宿主模式用这条）
+ *   5. 启动器登记的地址              —— <数据根>/state/dsh-web-url.txt（dsh-web-run 每次启动都刷新）
+ *   6. 宿主自己打印的地址            —— <数据根>/logs/dsh-web.log（取最后一次）
+ *   7. 兜底 3080                     —— 什么都没找到时才用，来源会标明是"默认值"
  * 调用方（status-page）按顺序逐个探活，取第一个真的响应的，并把来源显示在页面上；
  * 所以端口不对时页面会告诉你"我在探哪个、这个值是哪来的"，而不是干说一句不可用。
+ *
+ * 非 Docker 部署（宿主模式）不受影响：2 那条查不到 docker/容器就自动跳过（返回 null），
+ * 4 那条在宿主上反而最准（同一个 PID 命名空间，扫得到 dsh 进程），5 由同一个启动器写。
  */
+import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -106,6 +112,37 @@ export function configuredHostPort(configFile, readFile = readFileSync) {
 }
 
 /**
+ * 默认的 docker 查询：把容器的环境变量整段读出来。
+ * 同步 + 超时 + 不抛错：docker 没装、daemon 挂了、容器不存在，都只是"查不到"，
+ * 不能因此让状态页报错（宿主模式压根没有 docker，走这条必然是空）。
+ */
+export function dockerInspectEnv(container, { docker = 'docker', timeout = 2500 } = {}) {
+  try {
+    return String(execFileSync(docker, ['inspect', container, '--format', '{{range .Config.Env}}{{println .}}{{end}}'], {
+      encoding: 'utf8',
+      timeout,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }))
+  } catch { return '' }
+}
+
+/**
+ * 容器模式：宿主跑在 harness 容器里，和控制台是两个容器（各自 PID 命名空间），
+ * 所以 /proc 扫描扫不到它 —— 但控制台挂着只读 docker.sock，直接问那个容器要 DSH_PORT。
+ * 容器名可用 QQ_HARNESS_CONTAINER 覆盖（compose 里默认 qqbot-harness）。
+ */
+export function containerDshPort({ env = process.env, inspect = dockerInspectEnv } = {}) {
+  const container = env.QQ_HARNESS_CONTAINER || 'qqbot-harness'
+  let text = ''
+  try {
+    text = String(inspect(container) ?? '')
+  } catch { return null } // 查不到就是没有：任何异常都不该冒到状态页
+  if (!text) return null
+  const match = /^DSH_PORT=(\d+)\s*$/m.exec(text)
+  return match && validPort(match[1]) ? Number(match[1]) : null
+}
+
+/**
  * 按可信度排出候选端口（已去重，每项带中文来源说明）。
  * 纯函数 + 依赖注入，测试不需要真机器。
  */
@@ -116,6 +153,7 @@ export function dshPortCandidates({
   procRoot = '/proc',
   readdir = readdirSync,
   readFile = readFileSync,
+  inspect = dockerInspectEnv,
 } = {}) {
   const list = []
   const add = (port, source) => {
@@ -126,6 +164,7 @@ export function dshPortCandidates({
   }
 
   add(env.QQ_DSH_PORT, '环境变量 QQ_DSH_PORT')
+  add(containerDshPort({ env, inspect }), '运行中的 harness 容器（docker inspect DSH_PORT）')
   add(configuredHostPort(configFile, readFile), '控制台配置 qq-control.json')
   for (const proc of scanDshProcesses({ procRoot, readdir, readFile })) {
     add(proc.port, `运行中的 dsh 进程（pid ${proc.pid}）`)

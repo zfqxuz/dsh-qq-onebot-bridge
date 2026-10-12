@@ -1,525 +1,260 @@
 # dsh-qq-onebot-bridge
 
-QQ ↔ DeepSeek Harness 双向桥插件（独立 bundle）。QQ 消息直接驱动 DSH agent 会话，agent 回复自动发回 QQ。
+把 QQ 接进 DeepSeek Harness（下称 DSH）：QQ 消息驱动 DSH agent 会话，agent 的回复自动发回 QQ。给"自己有台机器、有个 QQ 小号、想让 DSH 当机器人脑子"的人用。
 
-> **v0.4.0 主题：一切皆可调试**。每条消息一个 traceId、每个"没回复"都有中文原因、任意历史消息都能离线重跑、假事件能喂进真实管线——而且这 6 条硬约束在自带控制台里随时可验收（见「[调试](#调试v04一切皆可调试)」与「[硬约束验收台](#硬约束验收台v04-阶段-4)」）。
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen.svg)](https://nodejs.org/)
+[![dsh](https://img.shields.io/badge/dsh-0.1%20%7C%200.2-6f42c1.svg)](package.json)
+[![onebot](https://img.shields.io/badge/OneBot-v11-black.svg)](https://github.com/botuniverse/onebot-11)
 
-## 功能总览
+[English](README.en.md) · [更新日志](CHANGELOG.md) · [本地改动与已知补丁](LOCAL-PATCH.md) · 当前版本 v0.7.3
 
-> 这里**只列最近两个大版本新增的能力**（v0.5 线与 v0.4 线）。更早的基础能力——双向消息桥、会话续接、持久化记忆、定时提醒、群管套件、TTS、生图、签到打卡、积分与小游戏、防撤回、敏感词过滤……——**全都还在**，逐版本记录见 [CHANGELOG.md](CHANGELOG.md)，开关与配置见下方「配置」。
+## 它解决什么问题
 
-**v0.5 线**
+DSH 是本地 agent 运行时，不认识 QQ；NapCat 这类 OneBot 实现能把 QQ 变成 WebSocket 上的 JSON 事件，但不替你管理会话、上下文与权限。本插件补中间那层：**每个群 / 每个私聊一条常驻 DSH 会话**，消息进去、回复出来，顺带处理权限、限流、媒体与群管。
 
-- **看得见（v0.5.0）**：别人**合并转发**的聊天记录不再被静默丢弃——`get_forward_msg` 展开成正文交给模型；同时接通了早已封装却没人调用的能力：`/成员`（名单/详情）、`/群信息`、`/好友`（默认关）、`/退群`（默认关）、agent 工具 `qq_recent_history` / `qq_member_info` / `qq_react`（表情回应）
-- **找得回（v0.5.0）**：`/文件`、`/文件 文件夹名`、`/取 文件名`（下载后只发私聊）、`/相册`、`/ocr`（图片转文字）；消息按天归档到 `cwd/qq-history/`，`/找 关键词` 与 agent 工具 `qq_search_history` 在最近 N 天里检索（控制台也有「群资产 · 历史检索」卡片）
-- **无人值守（v0.5.2）**：入站 webhook（`127.0.0.1:8798`，token / HMAC 二选一鉴权，限频 + 64 KiB 上限）把外部系统事件推进会话；定时播报（RSS / 天气 / MC，`/播报` 管理）；掉线自愈（只拉起、不杀进程，带冷却与每小时上限）
-- **点一下就完事（v0.5.3）**：`/戳` 主动戳一戳、被戳回戳、私聊「正在输入」、自动贴表情、表情回应统计 `/赞榜` `/谁赞了`、`/点赞`、标记已读（真机探针结论：该 NapCat 构建发不出内联按钮，故按能力探测降级）
-- **群运营工具箱（v0.5.4）**：`/群打卡`、`/全体余量`、`/禁言名单`、`/群详细`、`/入群通知`、`/批量踢`（两步确认 + 分批执行）、`/待办` `/完成待办` `/取消待办`、`/移动文件` `/重命名文件` `/删文件` `/新建文件夹`、`/传图`、`/群名` `/群备注`、`/群权限`、`/历史可见`、`/周报`
-- **控制台看得见（v0.5.5）**：性能面板（P50/P95）、定时任务面板、群配置页、回放 diff、注入场景库（17 个场景一键注入）
-- **群权限与申请补拉（v0.5.8）**：`/设管理` `/撤管理`（`enable` **永远显式**——探针发现省略就等于撤管理员）、`/邀请策略`（四个字面量）、`/加群方式 1–5`（只有 4/5 带问题/答案）、`/打卡名册`；`/申请` 把**离线期间错过**的入群申请/邀请/可疑好友拉回待审队列（`request_id` 就是审批要的 `flag`，所以拉回来真能批）；机器人自己被设/撤管理员时记账，被撤后写命令**直接说真话、零调用**（`/群搜索` 因 NapCat 未定义参数语义而按住不做）
-- **兼容 DSH 0.2 与官方桌面端（v0.5.9）**：peer 范围放行 `^0.2.0-rc.2`（CLI/web 宿主与 Electron 桌面端**同一个运行时**，两边都能直接装、不需要豁免）；**OneBot 端口被占时不再崩溃、也不拖住宿主启动**——如实报错 + 15 秒退避重试，占用者退出后**自动接管**（一台机器只允许一个实例托管 QQ 桥）
-- 补丁版本不新增功能：v0.5.1 审查修复、v0.5.6 真机启动修复 + 完整审计、v0.5.7 纯文档（详单见 [CHANGELOG.md](CHANGELOG.md)）
+- 一条反向 WebSocket 进、原路出：不需要公网、不需要回调地址，只绑 `127.0.0.1`；会话按群（`sessionMode: chat`）或按人（`user`）分组，宿主重启后可续接同一会话，另有一份持久记忆兜底。
+- 默认安全：`allowUsers` / `allowGroups` 为空时**拒绝一切**消息，白名单是唯一入口。默认可排查：每条消息一个 traceId，每次"没回复"都带中文原因；可录制、可离线回放、可注入假事件。它是独立 bundle，不想要了就 `dsh plugin --profile web remove @zfqxuz/dsh-qq-onebot-bridge`。
 
-**v0.4 线**
+## 特性
 
-- **一切皆可调试（v0.4.0）**：6 条硬约束全部落地，并且在控制台里可随时验收——① 每个「没回复」都带中文 reason ② 一条消息一个 traceId 贯穿 ③ 可回放（录制 · 离线重跑真实管线）④ 可体检（一键体检报告）⑤ 可导出诊断包（默认脱敏）⑥ 可注入假事件；每条消息走结构化事件 + SSE 实时事件流
-- **自带控制台（v0.4.0）**：`control/`（端口 8799）——会话列表、实时事件流、trace 检索、体检报告、诊断包导出、录制与离线回放、事件注入、硬约束验收台
-- **依赖修复（v0.4.1）**：改用 `@deepseek-ai/schemastery`，修好干净环境的安装依赖（issue #1）
+**在 QQ 里聊天与查询**
+- 群里 @机器人 说话，或私聊直接说；超长回复自动分段（`maxMessageLength`，默认 1700 字）；别人**合并转发**的聊天记录会展开成正文交给模型（默认上限 50 条 / 4000 字），不再被静默丢弃。
+- 只读查询：成员名单与详情、群资料、群荣誉/公告/精华、群文件（可下载到私聊）、群相册、图片 OCR、历史消息。消息按天归档到 `qq-history/`；`/找 关键词` 与 `qq_search_history` 在归档里检索。
 
-## 架构
+**语音与图片**
+- 语音转文字：群里 @机器人 引用一条语音、或私聊直接发语音（默认用 DSH 自带的本地识别，音频不出本机）；语音回复与朗读需自备 TTS（本地 GPT-SoVITS 或云端密钥）。
+- 看图走识图工具（`visionMode` 可选 `tool` 或原生多模态 `native`）；生图用 `/画 <描述词>`（需自备 OpenAI 兼容接口或本地 SD WebUI）。
 
-```
-QQ 客户端 ←→ OneBot 实现（NapCat / LLOneBot / OpenShamrock / Lagrange…）
-                  │ 反向 WebSocket（OneBot 连我们；端口 6700）
-                  ▼
-        dsh-qq-onebot-bridge（本插件）
-                  │ ctx.agents.create / followup
-                  ▼
-        DSH agent 会话（每群/每私聊用户一个）
+**群运营、玩法与自动化**（成组开关，默认关，用到再开）
+- 群管：`/mute` `/unmute` `/kick`（二次确认）`/clear` `/公告` `/精华` `/名片` `/头衔` `/设管理` `/撤管理` `/邀请策略` `/加群方式` `/退群`。
+- 运营：`/群打卡`（QQ 原生群签到）、`/全体余量`、`/禁言名单`、`/批量踢`、`/待办`、`/移动文件`、`/传图`、`/群名`、`/周报` 等。玩法与自动化：签到、积分、运势/抽签/塔罗、骰子、成语接龙、猜数字、投票、群待办、活跃榜、表情回应榜、点赞、戳一戳；定时提醒（含"每天/每周/每个工作日"重复）、定时播报（RSS/天气/MC）、入站 webhook、入群审批、每日日报、掉线自愈。
 
-旁路（都不参与回复决策，出问题也不影响发消息）：
-  每条入站事件 ──► qq-inbox.jsonl          （录制：可离线回放）
-  每个决策点   ──► qq-trace.jsonl          （结构化事件：stage/ok/reason/耗时/traceId）
-  快照每 2s    ──► qq-runtime.json         （会话/闸门/生效配置/录制与注入状态）
-  qq-inject.jsonl ◄── 控制台写、桥轮询读   （注入：默认 dry-run，出站全拦截）
+**可控、可调试、可运维**
+- 白名单 + 角色（`owner`/`admin` 与 `guest`）：guest 只读、只能碰自己的目录；写文件与 shell 只给超管。
+- 写动作走全局闸门（每分钟 20 / 每天 500）并记审计；另有敏感词过滤、刷屏治理、防撤回、回复限流、消息去重、工作日安静时段。`qq-trace.jsonl` 结构化事件 + 控制台实时事件流与决策链；录制 → 沙箱离线回放（不碰 QQ）→ 事件注入；一键体检、脱敏诊断包、6 条硬约束验收台。
+- DSH 设置里多一页「QQ助手」：7 组 59 个开关，每行标出配置键名；点一下原子写入 profile 的 `cordis.patch.yml`（留 `.bak-qqai` 备份），只改本插件那一段。
 
-独立控制台 control/（进程 8799，不依赖 DSH 桌面端）
-  ├─ 读：端口/进程、事件流、决策链、体检、录制列表、运行快照
-  ├─ 写：启停宿主/NapCat/TTS、释放端口、离线回放（沙箱 + dry-run）、事件注入
-  └─ 鉴权：仅 127.0.0.1 + token + 同源 Origin 校验
-```
+## 快速开始
 
-## 安装 / 卸载
+前提：Node ≥ 22.13（权限库用内置 `node:sqlite`）、一个能扫码登录的 QQ 小号。先选怎么拿代码，再选跑在哪——**没有 Docker 就走下面 1–5 步（推荐）**，有 Docker 直接看最后的容器一节。
+
+> 不想手动走 1–5 步？**整套（DSH + 插件 + 控制台 + NapCat 指引 + 自启）有一行安装**：
+> `curl -fsSL https://raw.githubusercontent.com/zfqxuz/qqbot-deploy/main/host/get-qqbot.sh | bash -s -- --qq <机器人QQ号>`
+> （Windows 用 `install.cmd host` 或 [部署包](https://github.com/zfqxuz/qqbot-deploy) 里的 PowerShell 入口；脚本会分层判断，已有 Node/dsh 不会重装）
+
+### 拿代码（三选一）
+
+- **本地目录**：已经有源码目录（自己 clone 的、别人给的、解压出来的包）——直接用。
+- **git clone**：`git clone --depth 1 https://github.com/zfqxuz/dsh-qq-onebot-bridge.git`。
+- **npm 包**（最省事）：`dsh plugin --profile web install @zfqxuz/dsh-qq-onebot-bridge`（版本以 npm 上的最新发布为准）。
+
+### 一、装 DSH
 
 ```sh
-# 安装（本地目录）：先在被安装的目录里装运行时依赖，再注册插件
-# 本地目录走 pnpm 的 link:，不会自动安装被链接包自己的依赖（ws）
-cd <本目录> && npm install --omit=dev
-dsh plugin --profile web add <本目录>
-
-# 卸载（随时可移除，独立 bundle 不影响其它插件）
-dsh plugin --profile web remove dsh-qq-onebot-bridge
+npm i -g @deepseek-ai/dsh
+dsh --version            # 打印版本号即成功
 ```
 
-装/卸后重启 `dsh web` 生效。
+### 二、装插件
 
-> 官方依赖（`@deepseek-ai/dsh-*`、`@deepseek-ai/schemastery`）声明为 `peerDependencies`，由 DSH 随 profile 一起装好，插件目录里不需要重复安装。
+```sh
+dsh plugin --profile web install @zfqxuz/dsh-qq-onebot-bridge   # 已发布的包，推荐
 
-### 官方桌面端（DSH Desktop）
+# 或者从源码目录装（开发 / 自建）：本地目录走 link:，不会替你装运行时依赖 ws
+cd <源码目录> && npm install --omit=dev && dsh plugin --profile web install <源码目录>
+```
 
-官方桌面端（Electron 版 `DeepSeek Harness.exe`）跑的是 `~/.dsh/profiles/desktop` 这个 profile，**由应用独占管理**（CLI 会拒绝 `dsh --profile desktop`），它和 CLI 版**共用同一个 DSH 运行时版本**——所以本插件从 v0.5.9 起声明的 peer 范围同时覆盖 `^0.1.x` 与 `^0.2.0-rc.2`，两边都能直接装、**不需要 `dsh plugin allow-version` 豁免**。
+> ⚠️ 只装依赖不等于挂上：还要把**安装时用的名字**写进该 profile `package.json` 的 `dsh.profile.bundles`（npm 装的是 `@zfqxuz/dsh-qq-onebot-bridge`，源码目录 / 软链装的是 `dsh-qq-onebot-bridge`）。省事的两条路：`node control/bin/qq-seed.mjs`（只补缺、不覆盖已有配置，先 `--dry-run` 看），或 DSH 插件页（设置 → 插件 → 安装）——管理器会自己加。
 
-装法与 web 版一致，只是走桌面端的插件管理界面：
+### 三、填白名单并起宿主
 
-1. 桌面端 → 设置 → 插件 → 安装，选**本地目录**（就是本插件所在的目录，也就是 `dsh plugin --profile web add` 时填的那个路径），或直接填 GitHub 仓库地址；
-2. 配置同样写在 `~/.dsh/profiles/desktop/cordis.patch.yml`（`id: dsh-qq-onebot-bridge` 的 config），不要写进仓库；
-3. 重启桌面端生效。
+编辑 profile 的配置层——**不是**仓库根目录那份 `cordis.patch.yml`（那只是挂载声明）：
 
-> 手动/本地目录安装（不经市场）时注意：光有依赖还不够，**必须同时把 `dsh-qq-onebot-bridge` 加进该 profile `package.json` 的 `dsh.profile.bundles`**，加载器才会挂载它——只装依赖的话它只会出现在"已装依赖"里而不工作（本机实测）。市场安装会自动处理这一步。
+```sh
+$EDITOR ~/.dsh/profiles/web/cordis.patch.yml
+```
 
-> ⚠️ **一台机器只允许一个实例托管 QQ 桥**：web 宿主与桌面端可以都装本插件，但两者抢同一个 OneBot 端口（默认 6700），只有一个能绑上——另一个会在日志里说明原因并**每 15 秒重试**，等端口释放后自动接管（v0.5.9 起不再崩溃、也不会拖住宿主启动）。**不要用"给另一个 profile 改个端口"来让两个都跑**：它们共用同一份 `cwd`（`qq-sessions.json` / `qq-memory/` / `qq-reminders.json` / 积分与统计…都在那儿），两个实例同时读写会互相覆盖，`injectDryRun:false` 时注入队列里的动作还会真的发两遍。要固定由某一个托管，正确做法是**只在一个 profile 里启用本插件**（另一个从 `dsh.profile.bundles` 里去掉），或者把 `cwd` 也分成两个不同目录。
+```yaml
+- id: dsh-qq-onebot-bridge
+  config:
+    allowUsers: [123456789]    # 你自己的 QQ 号；空数组 = 拒绝所有私聊
+    allowGroups: [987654321]   # 机器人要服务的群；空数组 = 拒绝所有群消息
+    botQq: 123456789           # 机器人自己的 QQ 号（群内 @ 检测用）
+```
 
-## 在 DSH 设置里开关功能（v0.6「QQ助手」页）
+```sh
+dsh web                  # 默认 http://127.0.0.1:3080
+```
 
-装好插件、**重启一次宿主**（让面板路由挂上）之后：**DSH → 设置 → QQ助手**。
+验证：日志出现 `QQ bridge ready: reverse-WS ws://127.0.0.1:6700`；`ss -ltn | grep :6700`（Windows：`netstat -ano | findstr :6700`）能看到监听；DSH 设置里出现「QQ助手」页。
 
-- **日常四组直接铺开**：对话基础 / 群运营工具箱 / 娱乐与互动 / 语音与媒体；**安全与风控 · 记录与通知 · 高级与调试**三组标"进阶"、默认折叠。共 7 组 59 个开关（从 224 个配置键里精选）。
-- **每行都写清楚**：中文标签 + 一句话"关掉会怎样" + **配置键名**（方便你去配置文件里找同名键），右侧是拨动开关；行尾徽标 `非默认`（与 schema 默认值不同）、`待重启`（配置文件里的值与当前生效值不一致）。
-- **点一下即写入**：只改 profile 的 `cordis.patch.yml` 里**本插件那一个 config 块**（其它条目与注释原样保留）；白名单之外的键、非布尔值一律拒绝。写入是**先写临时文件再 rename 的原子替换**，并留一份 `.bak-qqai` 备份。
-- **生效方式**：写入后 DSH 会热重载本插件条目（QQ 桥会**短暂重连一两秒**）；若宿主没开热重载，重启宿主后生效。
-- **没装 web 服务的宿主**（如 TUI profile）不会有这一页——此时用 `ctx.inject(['webServer'])` 的那段代码**根本不会执行**，插件照常工作。
-- **页面最上面是一组「相关链接」**（v0.6.3 起，原来在页面最底下）：依次是 **`QQ助手账号（登录 / 扫码）`**（→ 宿主的 `/qqai/account`，点开即已登录的 NapCat 页面）、`更新日志（v0.6.3）`（GitHub 的 `CHANGELOG.md`）、`调试文档`（README 调试章节）、**`调试台（独立控制台）`（压在最底下）**。地址由 `package.json` / `qq-control.json` 推导。
-  - **调试台是独立进程，插件不会自动启动它**：面板会探一次 `127.0.0.1:8799` 并如实标「运行中 / 未启动」；没启动时那一行直接给出可复制的启动命令。
-  - 点「调试台」走宿主的 `/qqai/console`：**跑着**就 302 到**带 token** 的地址（省掉手抄 token），**没跑**就回一页说明先跑哪条命令——不会再出现"点进去只看到连不上"。token 只在服务端读，**不进面板数据**。
+### 四、装 NapCat 并接上
 
-> 想改的键不在面板里？直接编辑 profile 的 `cordis.patch.yml`（面板顶行会显示它是哪个文件）。面板刻意只放"日常会动的开关"，不做成任意配置编辑器。
+- Linux：`curl -fL --connect-timeout 20 --max-time 1800 -o napcat.sh https://raw.githubusercontent.com/NapNeko/NapCat-Installer/main/script/install.sh && bash napcat.sh --docker n --cli y --github-proxy 0`
+- Windows：下载 [NapCat.Shell.Windows.OneKey.zip](https://github.com/NapNeko/NapCatQQ/releases/latest)，运行 `NapCatInstaller.exe`，完成后双击 `napcat.bat`
+- macOS：[NapCat-Mac-Installer](https://github.com/NapNeko/NapCat-Mac-Installer/releases/latest)
+
+然后在 NapCat 的 WebUI（`127.0.0.1:6099`）的 OneBot11 网络配置里加一个**反向 WebSocket 客户端**，地址 `ws://127.0.0.1:6700/`；插件配了 `accessToken` 时这里填同一个 token，最后扫码登录。
+
+验证：控制台「端口 / 进程」里 6700 的连接数 ≥ 1；在群里 @机器人 发 `/help` 能收到使用指南。官方步骤见 [NapCat 文档](https://doc.napneko.icu/guide/boot/Shell)。
+
+### 五、起控制台
+
+```sh
+npm run control                    # 或 node control/bin/qq-control.mjs --open
+```
+
+默认 `http://127.0.0.1:8799`，启动时打印**带 token 的完整地址**（token 存在被忽略的 `qq-control.json`）。验证：页面顶部能看到控制台 8799、DSH 宿主（端口自动探测）、OneBot 6700、NapCat 6099 的监听状态与占用进程，「会话所有权」卡片显示谁在托管（宿主/容器/桌面端）、名册与容器待机原因，「一键体检」给逐项 pass/fail 与修复建议。另有权限/状态控制台：`npm run acl -- init` 建库后 `npm run acl:ui`（默认 `http://127.0.0.1:8798`，含角色权限矩阵、主体分配、状态页、`/system` 与安装向导）。
+
+### 用 Docker（另一条运行环境）
+
+不想在本机装 Node 与 NapCat：用部署包 **[zfqxuz/qqbot-deploy](https://github.com/zfqxuz/qqbot-deploy)**——`bash install.sh`（Windows 双击 `install.cmd`，macOS 双击 `install.command`）把 `napcat` + `harness`（DSH + 本插件）+ `console` 跑成三个容器，装完打开 `http://127.0.0.1:8798/setup` 走向导（密码 → 白名单 → 系统配置 → 扫码）。更新与卸载见包内 `UPDATE-UNINSTALL.md`。
+
+## 更新与卸载
+
+```sh
+dsh plugin --profile web outdated                              # 看有没有新版
+dsh plugin --profile web update @zfqxuz/dsh-qq-onebot-bridge   # 更新到这个包的最新版
+dsh plugin --profile web remove @zfqxuz/dsh-qq-onebot-bridge   # 卸载
+```
+
+- 插件是**独立 bundle**，`remove` 之后就当没装过；它不会动你的会话历史、ACL 库、归档、工作区
+  （那些在数据根里，更新与卸载都不碰）。
+- 从源码目录装的（`install <源码目录>`）：更新 = `git -C <源码目录> pull && dsh plugin --profile web update`，
+  卸载同上（再把当初建的软链删掉）。
+- 整套部署（容器/宿主）的更新与卸载见部署包里的 `UPDATE-UNINSTALL.md`（含 `update.sh` /
+  `uninstall.sh` / `host/update-host.sh` / `host/uninstall-host.sh`）。
 
 ## 配置
 
-profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（完整示例见 `examples/cordis.patch.example.yml`）：
+配置写在 **profile 的 `cordis.patch.yml`** 中 `id: dsh-qq-onebot-bridge` 的 `config` 块（例：`~/.dsh/profiles/web/cordis.patch.yml`；完整示例见 [examples/cordis.patch.example.yml](examples/cordis.patch.example.yml)）。**密钥只写在这里**（仓库外），仓库根目录那份被 git 跟踪、别往里填。生效方式：重启宿主，或在设置「QQ助手」页点开关（宿主热重载该条目，QQ 桥会短暂重连）。
 
-> ⚠️ **别改错文件**：仓库根目录也有一个同名 `cordis.patch.yml`，那是**安装用的 bundle patch**（4 行，只有 `insert: - id: …`），**不要往里填配置**。真正要改的是 **profile 目录**里的那份，例如 `~/.dsh/profiles/web/cordis.patch.yml`（Windows：`C:\Users\<你>\.dsh\profiles\web\cordis.patch.yml`）——它在仓库外，**密钥写在那里才不会进 git**。
+键名与默认值取自 `lib/index.js` 的 `Config`（schema 是唯一事实源）；示例文件成文较早，个别值（如 `voiceReadingEnabled`）与当前默认不同，以本表与 schema 为准：
 
-| 键 | 默认 | 说明 |
+| 键 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `host` / `port` / `accessToken` | string / number / string | `127.0.0.1` / `6700` / `''` | 反向 WS 监听地址与端口（别把 host 改成 `0.0.0.0`）；OneBot 端须带的 Bearer token（空 = 不校验） |
+| `allowUsers` / `allowGroups` | number[] / number[] | `[]` / `[]` | 私聊 / 群白名单；**空 = 拒绝所有私聊 / 群消息** |
+| `botQq` / `replyOnlyWhenMentioned` / `mentionAliases` | number / boolean / string[] | `0` / `true` / `[]` | 群内 @ 检测：机器人 QQ 号、仅 @ 才回复、纯文本 @ 的额外称呼 |
+| `acceptPrivate` / `sessionMode` | boolean / `chat`\|`user` | `true` / `chat` | 是否响应私聊（仍受 `allowUsers` 限制）；群会话粒度：每群一条 / 每群每人一条 |
+| `cwd` / `provider` / `model` | string / string / string | `''` / `''` / `''` | 会话工作目录（空 = 宿主 cwd，运行产物落这里）；覆盖 LLM provider / 模型（空 = agent 默认） |
+| `adminUsers` / `adminEnabled` / `identity` | number[] / boolean / object | `[]` / `true` / 未配置 | 管理命令与 admin 身份的来源；管理命令总开关；角色映射：`enabled` / `map` / `defaultRole` / `groupRole` / `groupRoles` / `perSubjectDirs` |
+| `aclEnabled` / `aclDbFile` / `permissionPreset` | boolean / string / string | `true` / `''` / `''` | 用 `acl.db` 作角色/权限来源（空路径 = 数据根下 `config/acl.db`）；库不存在时回落到配置翻译；QQ 会话使用的 DSH 权限 preset（空 = 宿主默认） |
+| `maxMessageLength` / `botName` | number / string | `1700` / `小鲸鱼` | 单条出站消息最大字符数（超出分段）；机器人显示名（合并转发卡片署名） |
+| `actionRatePerMinute` / `actionRatePerDay` / `actionAuditEnabled` | number / number / boolean | `20` / `500` / `true` | 写动作全局闸门（全部会话合计，越限拒绝并记原因）；写操作与拒绝进 `qq-actions.log` |
+| `rateLimitEnabled` / `dedupEnabled` / `quietHoursEnabled` / `quietHours` | boolean / boolean / boolean / string[] | `false` / `true` / `false` / `['9:00-12:00','14:00-18:00']` | 出站回复限流（`rateLimitMaxReplies` / `rateLimitWindowSeconds`）；重复 message_id 去重（`dedupWindowSeconds`）；工作日安静时段不回任何消息（提醒与开奖照常）；时段为本地时间 `H:MM-H:MM`，可跨午夜 |
+| `memoryEnabled` / `memoryMaxEntries` / `sessionResumeEnabled` | boolean / number / boolean | `true` / `30` / `true` | 每会话持久记忆（`qq-memory/`）与条数上限；宿主重启后续接同一会话 |
+| `sessionConflictPolicy` / `sessionConflictWaitSeconds` / `sessionConflictNoticeSeconds` / `sessionConflictMaxQueued` / `sessionConflictBackoffSeconds` / `harnessHeartbeatEnabled` / `harnessHeartbeatSeconds` | enum / number / number / number / number[] / boolean / number | `wait` / `180` / `8` / `5` / `[5,15,60,300,900]` / `true` / `5` | **会话写权被别的客户端占用时**：收下消息 → 排队 → 拿到锁在原会话里按序补跑（`fork` = 超时另开新会话、`fail` = 旧行为），超时与丢弃都会明确回执；**托管权心跳**：每 N 秒在数据根 `state/harness/` 写自己的心跳并选主（宿主与容器共用数据根时，用它判断该不该由本实例起 harness），`/health` 与控制台会显示「谁在托管」 |
+| `reminderEnabled` / `reminderMaxPerChat` | boolean / number | `true` / `10` | 定时提醒（群聊需 @；存 `qq-reminders.json`）与每会话上限 |
+| `traceEnabled` / `traceLevel` / `traceMemorySize` / `recordInbound` / `inboxRedact` | boolean / enum / number / boolean / boolean | `true` / `debug` / `500` / `true` / `false` | 全链路事件（`warn` 只留问题，省磁盘）；内存里保留的最近事件数；录制每条入站帧到 `qq-inbox.jsonl`（离线回放依赖它）；录制时脱敏 QQ 号 |
+| `injectEnabled` / `injectDryRun` / `sttEnabled` / `sttProvider` | boolean / boolean / boolean / enum | `false` / `true` / `false` / `dsh` | 事件注入通道与其 dry-run；**dry-run 保持打开**；语音转文字；`dsh` = 宿主本地识别（不出本机），`cloud` = 走 `sttBaseUrl`+`sttApiKey` |
+| `ttsEnabled` / `ttsProvider` / `imageGenEnabled` / `imageGenProvider` | boolean / enum / boolean / enum | `false` / `azure` / `false` / `openai` | 语音回复（**需自备 TTS**）；`local` = 本地 GPT-SoVITS；生图（**需自备后端**）；命令见 `imageGenCommand`（默认 `/画`） |
+| `privateImageView` / `groupImageView` / `visionMode` / `memberQueryEnabled` / `groupFileEnabled` / `groupFileDownloadEnabled` | boolean / boolean / enum / boolean / boolean / boolean | `true` / `true` / `tool` / `true` / `true` / `true` | 下载对方发来的图片交给识图工具（存 `qq-images/`）；`native` = 多模态附件直传；`/成员` 与 `qq_member_info`；`/文件` 列表；`/取` 下载（只发私聊）。同类只读项：`albumEnabled`、`ocrEnabled` |
+| `historyArchiveEnabled` / `historyArchiveKeepDays` / `historySearchEnabled` / `historySearchDays` / `forwardExpandEnabled` | boolean / number / boolean / number / boolean | `true` / `90` / `true` / `7` / `true` | 消息按天归档到 `qq-history/`；过期移入回收站，不物理删除；`/找` 与 `qq_search_history`（默认扫描天数）；展开合并转发（`forwardMaxNodes` 50 / `forwardMaxChars` 4000） |
+| `imageRetentionDays` / `imageTrashEnabled` | number / boolean | `14` / `true` | 媒体保留天数；过期**只回收不销毁**（移入 `qq-trash/<日期>/`） |
+| `ffmpegPath` | string | `ffmpeg` | 语音转 WAV、GIF 取首帧、大图压缩、本地 TTS 转 mp3 用 |
+
+其余 150+ 个键分两类：**功能开关组**（默认关，用到再开）——`keywordEnabled`、`pointsEnabled`、`gameEnabled`、`antiRecallEnabled`、`filterEnabled`/`filterWordsFile`/`filterAction`、`floodEnabled`、`verifyEnabled`、`statsEnabled`、`checkinEnabled`、`welcomeEnabled`、`dailyReportEnabled`、`broadcastEnabled`/`broadcastJobs`、`webhookEnabled`/`webhookPort`/`webhookSources`、`engageEnabled` 及其子开关、`groupOpsEnabled` 及其子开关、`autoHealEnabled`、`notifyEnabled`；**落点与布局**——`dataRoot`（数据根，见 `lib/paths.js`）与 `persona`（人设注入，见 [LOCAL-PATCH.md](LOCAL-PATCH.md)），这两个不在 schema 里但代码会读。
+
+## 命令与工具
+
+群聊需要 @机器人（标注"私聊"的除外），并受白名单与角色限制。以下按 `/help` 的实际输出整理。
+
+| 命令 | 作用 | 要求 |
 |---|---|---|
-| `host` | `127.0.0.1` | 反向 WS 监听地址 |
-| `port` | `6700` | 反向 WS 监听端口 |
-| `accessToken` | `''` | OneBot 端须携带的 Bearer token（空=不校验） |
-| `allowUsers` | `[]` | 私聊用户白名单（**空=拒绝所有私聊**，务必填入自己的 QQ 号） |
-| `allowGroups` | `[]` | 群白名单（**空=拒绝所有群消息**，列出机器人服务的群号） |
-| `botQq` | `0` | 机器人 QQ 号（用于群内 @ 检测；0=任何群消息视为@） |
-| `replyOnlyWhenMentioned` | `true` | 群聊仅 @机器人 才回复 |
-| `acceptPrivate` | `true` | 是否回复私聊（私聊仍需 allowUsers 放行） |
-| `autoCollectStickers` | `false` | 自动收藏消息里的图片表情到本地图库 |
-| `faceEnabled` | `true` | 表情功能总开关（[face:] 标记 + qq_face_* 工具） |
-| `sessionMode` | `chat` | 群会话分组：`chat`=每群一会话；`user`=每群每人一会话 |
-| `cwd` | `''` | 会话工作目录（同时决定 `qq-faces/`、`qq-replies/`、`qq-bridge-debug.log` 的位置） |
-| `provider` | `''` | LLM provider 覆盖（空=agent 默认） |
-| `model` | `''` | LLM 模型覆盖（空=agent 默认） |
-| `maxMessageLength` | `1700` | 单条出站消息最大字符数（超出自动分段） |
-| `botName` | `小鲸鱼` | 机器人显示名（合并转发卡片的署名） |
-| `sessionResumeEnabled` | `true` | 宿主重启后 `resume` 上次会话（完整记录续接）；关掉则每次重启都新建会话 |
-| `agentMediaToolsEnabled` | `true` | 暴露 `qq_send_image` / `qq_send_file` / `qq_send_voice` / `qq_recall` 工具 |
-| `fileSendDirs` | `[]` | agent 允许发送文件的额外目录（会话 cwd 始终允许） |
-| `fileSendMaxBytes` | `52428800` | agent 可发送的单文件大小上限（字节，默认 50 MiB） |
-| `imageSendMaxBytes` | `4194304` | 图片超过此大小（默认 4 MiB）先用 ffmpeg 压缩再发 |
-| `recallWindowSeconds` | `110` | 出站消息可被 `qq_recall` / `/撤回` 撤回的时间窗（秒） |
-| `forwardLongReplies` | `false` | 群聊超长回复改发合并转发卡片 |
-| `forwardThresholdChars` | `600` | 触发合并转发的字数阈值 |
-| `actionRatePerMinute` | `20` | 写操作闸门：全部会话合计每分钟上限 |
-| `actionRatePerDay` | `500` | 写操作闸门：全部会话合计每日上限 |
-| `actionAuditEnabled` | `true` | 写操作与拒绝记录写入 `cwd/qq-actions.log` |
-| `keywordEnabled` | `false` | 关键词问答库（**默认关闭**）：命中本地词库直接回复，不走模型、不需要 @ |
-| `keywordFile` | `''` | 词库文件路径（空=`cwd/qq-keywords.json`）；支持 exact/contains/regex、随机多答、图片、作用域与冷却 |
-| `fortuneEnabled` | `true` | 今日人品/运势、抽签、塔罗（按 QQ 号+日期确定性生成，纯本地） |
-| `diceEnabled` | `true` | 骰子（`.r 3d6`）与随机抽人（`/抽一个 A B C`） |
-| `pointsEnabled` | `false` | 积分经济（**默认关闭**）：`/积分` `/排行榜` `/转账 @某人 数量` |
-| `pointsPerMessage` | `1` | 每条消息获得的积分（0=聊天不得分） |
-| `pointsDailyCap` | `20` | 每人每日通过聊天可得积分上限 |
-| `pointsCheckinBonus` | `5` | 每日签到额外奖励积分 |
-| `gameEnabled` | `false` | 群内小游戏（**默认关闭**）：成语接龙、猜数字 |
-| `idiomChainTimeoutSeconds` | `120` | 接龙闲置超时（秒） |
-| `guessNumberMax` | `100` | 猜数字上限（1~N） |
-| `guessNumberMaxTries` | `10` | 猜数字可用次数 |
-| `antiRecallEnabled` | `false` | 防撤回（**默认关闭**）：缓存最近消息，被撤回时补发内容 |
-| `antiRecallInGroup` | `true` | 补发到群里（false=私聊发给第一个管理员） |
-| `antiRecallImages` | `true` | 一并补发被撤回的图片（最多 3 张） |
-| `antiRecallCacheSize` | `50` | 每会话缓存的消息条数 |
-| `antiRecallMaxAgeMinutes` | `120` | 缓存消息可恢复时长（分钟） |
-| `antiRecallCooldownSeconds` | `5` | 同一会话两次补发的最小间隔 |
-| `filterEnabled` | `false` | 敏感词过滤（**默认关闭**） |
-| `filterWordsFile` | `''` | 词表路径（空=`cwd/qq-badwords.txt`；`#` 注释、`re:` 正则、改动自动热重载） |
-| `filterAction` | `warn` | 处置方式：`warn` 提醒 / `recall` 撤回 / `mute` 禁言 |
-| `filterMuteSeconds` | `300` | `mute` 处置与刷屏升级时的禁言秒数 |
-| `filterWhitelist` | `[]` | 白名单词/正则（命中即放行） |
-| `floodEnabled` | `false` | 刷屏防护（**默认关闭**） |
-| `floodWindowSeconds` | `10` | 刷屏统计窗口（秒） |
-| `floodMaxMessages` | `8` | 窗口内允许的消息条数 |
-| `floodMuteSeconds` | `300` | 刷屏升级禁言秒数 |
-| `floodStrikeLimit` | `3` | 警告几次后禁言 |
-| `verifyEnabled` | `false` | 入群/加好友验证（**默认关闭**）：请求进队列并私聊推送管理员 |
-| `verifyKeyword` | `''` | 口令：验证消息包含它则自动放行（空=全部人工审批） |
-| `verifyTimeoutSeconds` | `300` | 请求超时时间（超时出队并提醒管理员） |
-| `verifyMaxPending` | `20` | 待审队列上限 |
-| `statsEnabled` | `false` | 发言统计（**默认关闭**）：`/统计` 今日活跃榜、`/周榜` 周榜，并作为日报数据源 |
-| `statsKeepDays` | `30` | 发言统计保留天数 |
-| `groupReadEnabled` | `true` | 只读群信息：`/荣誉` `/公告` `/群精华` |
-| `mcStatusEnabled` | `true` | `/mc <host[:port]>` 查询 Minecraft Java 服务器状态（Server List Ping，无 Key） |
-| `mcStatusTimeoutMs` | `5000` | MC 状态查询超时（毫秒） |
-| `recurringReminderEnabled` | `true` | 重复提醒：「每天8点」「每周一9点」「每个工作日15点」 |
-| `dailyReportEnabled` | `false` | 每日群日报（**默认关闭**）：到点让 agent 总结当天聊天并发到群里 |
-| `dailyReportTime` | `22:00` | 日报时间（本地 HH:mm） |
-| `dailyReportChats` | `[]` | 固定接收日报的会话（如 `["g:100000001"]`；为空则用 `/日报 on` 的开关，再为空则回落到全部群白名单） |
-| `sttEnabled` | `false` | 语音转文字总开关 |
-| `sttBaseUrl` | `https://open.bigmodel.cn/api/paas/v4` | STT 端点（OpenAI 兼容 `/audio/transcriptions`） |
-| `sttModel` | `glm-asr-2512` | STT 模型（智谱 `glm-asr-2512` / SiliconFlow `FunAudioLLM/SenseVoiceSmall`） |
-| `sttApiKey` | `''` | STT API Key（可复用智谱 GLM 系列的 key） |
-| `privateImageView` | `true` | 私聊中主动下载查看对方发送的图片/动画表情（存 `cwd/qq-images/`，agent 用 describe_image 查看） |
-| `visionMode` | `tool` | 识图方式：`tool`=存盘后由 `visionToolName` 工具查看（稳定）；`native`=原生多模态附件直传模型（DSH 0.1.1+，文本模型自动降级） |
-| `visionToolName` | `describe_image` | `tool` 模式下使用的识图工具名 |
-| `imageRetentionDays` | `14` | 下载图片（qq-images/qq-replies）保留天数，宿主启动时清理更旧的 |
-| `imageTrashEnabled` | `true` | **删除策略：只回收不销毁**——过期图片移动到 `cwd/qq-trash/<日期>/` 而不是删除（失败则保留原文件） |
-| `imageTrashDir` | `''` | 回收目录（空=`cwd/qq-trash`）；该目录**不会自动清理**，由你自行处理（本机可 `scripts/safe-delete.ps1` 送进回收站） |
-| `memoryEnabled` | `true` | 每会话持久化记忆（最近对话存 `cwd/qq-memory/`，宿主重启后自动恢复；`/new` 清除） |
-| `memoryMaxEntries` | `30` | 每个会话保留的对话条数上限 |
-| `rateLimitEnabled` | `false` | 回复限流开关（默认关闭）；开启后每会话窗口内最多回复 `rateLimitMaxReplies` 条 |
-| `rateLimitMaxReplies` | `10` | 限流窗口内每会话最大回复数 |
-| `rateLimitWindowSeconds` | `60` | 限流滑动窗口（秒） |
-| `dedupEnabled` | `true` | 消息去重（同一 message_id 窗口内重复投递忽略，防重连重发） |
-| `dedupWindowSeconds` | `300` | 去重窗口（秒） |
-| `reminderEnabled` | `true` | 定时提醒总开关（群聊需 @，私聊直接说；存 `cwd/qq-reminders.json` 跨重启保留） |
-| `reminderMaxPerChat` | `10` | 每个会话最多同时保留的提醒数 |
-| `quietHoursEnabled` | `false` | 避开高峰期开关（**默认关闭**）；开启后工作日静默时段内不回复任何入站消息（不消耗模型调用），已排定的定时提醒/投票开奖照常 |
-| `quietHours` | `['9:00-12:00', '14:00-18:00']` | 静默时段（本地时间 `H:MM-H:MM`，全角冒号自动归一化；可跨午夜如 `22:00-2:00`） |
-| `quietWeekendExempt` | `true` | 周六/周日不受静默时段限制 |
-| `ttsEnabled` | `false` | 语音回复总开关（默认关闭；开启后每条文字回复后跟随一条语音） |
-| `ttsProvider` | `azure` | 合成方案：`azure`（微软晓晓）/ `openai`（任意 OpenAI 兼容 `/audio/speech`）/ `local`（**本地 GPT-SoVITS 语音克隆，零 API 成本**） |
-| `ttsApiKey` | `''` | Azure / OpenAI 兼容服务的 key（`local` 不需要） |
-| `ttsVoice` | `zh-CN-XiaoxiaoNeural` | 云端音色名 |
-| `ttsStyle` | `chat` | Azure 语气风格（cheerful/sad…） |
-| `ttsMaxChars` | `120` | 语音朗读最大字符数（超出截断，只影响语音不影响文字） |
-| `ttsLocalUrl` | `http://127.0.0.1:9880` | 本地 GPT-SoVITS api_v2 服务地址 |
-| `ttsLocalRefAudio` | `''` | **本地 TTS 必填**：音色参考音频绝对路径（3-10 秒 wav，如 `D:/voice/xiaojingyu.wav`） |
-| `ttsLocalPromptText` | `''` | 参考音频的台词（可留空） |
-| `ttsLocalTextLang` | `zh` | 合成文本语言 |
-| `ttsLocalPromptLang` | `zh` | 参考音频台词语言 |
-| `ttsLocalConvertToMp3` | `true` | 本地 wav 输出用 ffmpeg 自动转 mp3 再发送（QQ/NapCat 兼容性更好） |
-| `pokeEnabled` | `true` | 戳一戳回复开关（白名单会话内被戳随机卖萌回复） |
-| `pokeReplies` | `[...]` | 戳一戳回复文案列表（随机选一条） |
-| `pokeCooldownSeconds` | `15` | 每会话戳一戳回复最小间隔（秒，防刷） |
-| `voiceReadingEnabled` | `true` | 语音朗读：@机器人引用文字说「读一下/念出来」，或 `/读 <文字>`（走 ttsProvider 合成） |
-| `checkinEnabled` | `false` | 每日签到（**默认关闭**）：说「签到」打卡，连续/累计天数存 `cwd/qq-checkin/`；「签到榜」看排行 |
-| `checkinKeyword` | `签到` | 签到触发词 |
-| `welcomeEnabled` | `false` | 入群欢迎语（**默认关闭**）：新人进群自动 @+欢迎文案（机器人自己入群不触发） |
-| `welcomeText` | `''` | 欢迎文案（空=内置默认文案） |
-| `imageGenEnabled` | `false` | 生图开关（**默认关闭**）：`/画 <描述词>` 生成图片（群聊需 @机器人） |
-| `imageGenProvider` | `openai` | 生图后端：`openai`=任意 OpenAI 兼容 `/images/generations`（DALL·E/CogView/SiliconFlow…）；`local`=本地 SD WebUI（AUTOMATIC1111） |
-| `imageGenBaseUrl` | `''` | 后端地址（空=按 provider 取默认：api.openai.com 或 127.0.0.1:7860） |
-| `imageGenApiKey` | `''` | OpenAI 兼容服务 key（local 不需要） |
-| `imageGenModel` | `''` | 模型 id（空=服务默认，如 gpt-image-1；local 忽略） |
-| `imageGenSize` | `1024x1024` | 图片尺寸 WxH（local 支持任意尺寸如 768x512） |
-| `imageGenSteps` | `20` | 采样步数（仅 local） |
-| `imageGenCfgScale` | `7` | CFG 提示词强度（仅 local） |
-| `imageGenSampler` | `''` | 采样器（仅 local，空=WebUI 默认） |
-| `imageGenCooldownSeconds` | `60` | 每会话两次生图最小间隔（秒，成本/刷屏防护） |
-| `imageGenDailyLimit` | `20` | 每会话每日生图上限 |
-| `imageGenMaxPromptChars` | `400` | 描述词最大字数（超出截断） |
-| `imageGenCommand` | `/画` | 生图触发命令 |
-| `traceEnabled` | `true` | 全链路结构化事件（每条消息一个 traceId，每个分支带 reason）；关掉则控制台只剩端口/日志能力 |
-| `traceLevel` | `debug` | `debug` 记录全部事件（含每次静默/拒绝）；`warn` 只留问题，用于长期运行省磁盘 |
-| `traceMemorySize` | `500` | 内存里保留的最近事件数（控制台决策链用），落盘另受 4MiB 轮转上限约束 |
-| `traceFile` | `''` | 事件文件路径（空=`cwd/qq-trace.jsonl`） |
-| `recordInbound` | `true` | **录制**：把收到的每条消息/通知/请求写进 `qq-inbox.jsonl`（可离线回放）；只写本机、不影响回复 |
-| `inboxFile` | `''` | 录制文件路径（空=`cwd/qq-inbox.jsonl`，按 2MiB 轮转） |
-| `inboxRedact` | `false` | 录制时把 6 位以上数字（QQ 号）脱敏后再落盘，便于把录制文件发给别人 |
-| `injectEnabled` | `false` | **事件注入通道**（默认关闭）：开启后桥每 `injectIntervalMs` 轮询 `qq-inject.jsonl`，把新行喂进真实管线 |
-| `injectFile` | `''` | 注入队列路径（空=`cwd/qq-inject.jsonl`）；启动时已有的历史行会被跳过并记一条原因 |
-| `injectDryRun` | `true` | **强烈建议保持 `true`**：注入触发的所有出站调用（发消息/撤回/群管…）都被拦截并计数，绝不真发 QQ；**异步 agent 回合的回复同样被拦下**（原文记进事件流） |
-| `injectIntervalMs` | `2000` | 注入队列轮询间隔（毫秒，最小 500） |
+| `/help`（`帮助`/`菜单`）、`/new`、`/status`、`/health`、`/summary`、`/reminders`、`/撤回`、`/export` | 使用指南、开新会话、会话状态、运行诊断、总结本会话、查看提醒、撤回上一条、导出对话 | 白名单内；除指南/新会话/状态/诊断外各有开关（默认开） |
+| `/找 <关键词>` | 检索本会话最近 N 天归档（空格分词 = 同时包含） | `historySearchEnabled` |
+| `/荣誉` `/公告` `/群精华` `/群信息`、`/成员 [@某人]` | 只读群信息、成员名单与详情 | `groupReadEnabled`、`memberQueryEnabled` |
+| `/文件 [文件夹]`、`/取 <文件名>`、`/相册`、`/ocr`、`/mc <host[:port]>` | 群文件浏览与下载（只发私聊）、群相册、引用图片识字、MC 服务器状态 | 前四项需 NapCat 专有接口 |
+| `签到` / `签到榜`、`今日人品`/`运势`/`抽签`/`塔罗`、`.r 3d6`、`/抽一个 A B C` | 本地打卡、运势、骰子（纯本地，不调模型） | `checkinEnabled`；运势与骰子默认开 |
+| `/积分` `/排行榜` `/转账 @某人 数量`、`接龙`/`猜数字`/`不玩了` | 积分经济、群内小游戏 | `pointsEnabled`、`gameEnabled`（默认关） |
+| `投票：问题？A xx B xx`、`/vote`、`/vote-end`、`/todo add\|list\|done\|clear`、`记一下：xxx` | 投票、共享待办（存 `qq-todos/`） | `voteEnabled`、`todoEnabled`（默认开） |
+| `/统计` `/活跃榜` `/周榜`、`/赞榜`、`/谁赞了 <消息ID>`、`/点赞 [@某人]`、`/戳 @某人` | 发言统计、表情回应统计、资料卡赞、戳一戳 | 各开关默认关；`/戳` 还需管理员 |
+| `/日报 [on\|off]`、`/kw add\|del\|list`、`/播报 [测试 <id>]` | 日报、词库、定时任务与 webhook 状态 | 对应开关 + 管理员 |
+| `/待审`、`/同意 <序号>`、`/拒绝 <序号>`、`/同意 all` | 入群/加好友审批队列 | `verifyEnabled` + 管理员 |
+| `/mute` `/unmute` `/kick` `/clear` `/公告` `/精华` `/名片` `/头衔` `/全员禁言` `/解除全员禁言` | 群管（`/kick` 需群里二次确认） | 管理员 |
+| `/设管理` `/撤管理` `/邀请策略` `/加群方式 1–5` `/退群 确认`、`/ws`、`/handoff` `/交接` | 群权限管理、工作区切换、会话交接 | 管理员；`/ws`、`/handoff` 仅超管 |
 
-## 用户侧（OneBot 实现）配置
+群运营工具箱（`groupOpsEnabled` 打开后，写操作要求机器人在群里是管理员）：`/群打卡`、`/全体余量`、`/禁言名单`、`/群详细`、`/入群通知`、`/打卡名册`、`/管理员名单`、`/批量踢`（二次确认）、`/待办` `/完成待办` `/取消待办`、`/移动文件` `/重命名文件` `/删文件` `/新建文件夹`、`/传图`、`/群名` `/群备注`、`/群权限`、`/历史可见`、`/申请`、`/周报`——各子命令另有开关（`opsReadEnabled`、`opsKickEnabled`、`opsFileEnabled`…）。
 
-以 NapCat 为例：OneBot11 配置里把 WebSocket 客户端地址填成：
+agent 工具（QQ 会话内，按角色权限决定注不注册）：`qq_send_image` / `qq_send_file` / `qq_send_voice`（发本地媒体，受 `agentMediaToolsEnabled`、`fileSendDirs`、`fileSendMaxBytes` 限制）、`qq_recall`（撤回自己最近的消息）、`qq_member_info`、`qq_recent_history`、`qq_search_history`、`qq_react`（贴表情回应，写动作过闸门）、`qq_face_list` / `qq_face_send`（`faceEnabled`）。
 
-```
-ws://127.0.0.1:6700/
-```
+## 权限与安全
 
-其它实现同理（LLOneBot 填反向 WebSocket、OpenShamrock 填被动 WebSocket、go-cqhttp 填 `ws-reverse`）。若本插件配了 `accessToken`，OneBot 端填同一 token。
+**两道门，顺序是"白名单 → 角色"。**
 
-## 语音转文字（STT）
+- 白名单：`allowUsers` / `allowGroups` 为空即全拒；白名单外的人连唤醒 agent 的机会都没有。角色：`identity`（`map` / `groupRoles` / `defaultRole`）与 `adminUsers` 决定"这个人/这个群是谁"；默认 `guest` 且 fail-closed（认不出的角色名一律按 guest，不会意外提权），`owner` 与 `admin` 是同一个超管身份的历史别名。
+- 权限库：`aclEnabled` 默认开，角色、授予、deny、限额都是 `acl.db` 里的数据（`npm run acl -- init` 建库、`import-config` 从配置导入；`aclBootstrap: true` 首启自动播种）。库不存在时回落到从配置翻译，行为与旧版一致。界面是权限控制台（`npm run acl:ui`），命令行是 `npm run acl`。
 
-**触发规则**（最终版）：
+**guest 能碰到什么（真正的边界）**
 
-| 场景 | 行为 |
+- 每个主体一个目录：`<数据根>/subjects/u<QQ>` / `g<群号>`，会话 cwd、受限读工具的根、可发送文件的根都是它——群与群、人与人隔离；**同群成员之间不隔离**（`identity.perSubjectDirs: false` 可关，不建议）。
+- 只读工具（`read` / `glob` / `grep`）限制在主体目录 + `<数据根>/subjects/shared`；宿主级工具（`session_read`、`ecs_*`、`n8n_*`、`gh_*`、`bash` 等）按权限点白名单裁剪，没授权就不注册。guest 不能写文件、不能跑 shell、不能发自己目录外的文件（`fileSendDirs` 对 guest 不生效）。
+- 超管走 profile 里的完整 preset；`permissionPreset` 可按角色覆盖，但 `identity.roles.*.preset` 默认指向 profile 里必须存在的 `qq-coding` / `qq-readonly`——缺了只记一条 warn，会话退化成"只有宿主级工具"，不会静默给权限。
+
+**出站、审计与敏感信息**
+
+- 写动作（发消息/撤回/群管/上传/转发）合计受 `actionRatePerMinute` 与 `actionRatePerDay` 限制，越限拒绝并记录；`actionAuditEnabled` 默认开，写操作与拒绝都进 `qq-actions.log`；`/kick`、`/批量踢`、`/退群` 需群里二次确认。
+- `accessToken`、`sttApiKey`、`ttsApiKey`、`imageGenApiKey`、webhook 的 `token`/`secret` 在 schema 里是 secret：运行快照与诊断包不含密钥原文；控制台「导出诊断包」默认勾选脱敏（QQ 号按位掩码、正文替换为「[已脱敏 N 字]」，附 `REDACTED.json` 说明口径）。
+- 记录类产物（`qq-inbox.jsonl` 含消息原文、`qq-trace.jsonl` 含会话键与文本片段、`qq-actions.log`）只写本机，且被 `.gitignore` 的 `qq-*` 规则覆盖——cwd 恰好在仓库里也不会误提交。两个控制台都只绑 `127.0.0.1`、所有接口要 token、带 `Origin` 的跨站请求一律拒绝。
+
+## 兼容性
+
+| 项 | 范围 |
 |---|---|
-| 群聊：@机器人 + 引用（回复）一条语音 | ✅ 转写被引用语音并以文字回复 |
-| 群聊：单独发语音（不@/不引用） | ❌ 不触发 |
-| 私聊：直接发语音 | ✅ 转写并回复（不受 acceptPrivate 限制） |
-| 私聊：文字 + 引用语音 | ✅ 转写被引用语音 |
+| DSH | peer 范围覆盖 `^0.1.x` 与 `^0.2.0-rc.2`；CLI/web 宿主与官方桌面端是同一运行时，两边都能直接装，不需要 `dsh plugin allow-version` 豁免 |
+| 协议 | OneBot v11 反向 WebSocket。NapCat 是主要验证目标（OCR、相册、群文件、群打卡、入群通知走 NapCat 专有接口，换实现会不可用）；LLOneBot / OpenShamrock / Lagrange 等同协议实现理论可用，未逐一验证 |
+| Node / ffmpeg | Node ≥ 22.13（`node:sqlite` 不再需要 `--experimental-sqlite`；验证环境 v24.9.0）；ffmpeg 可选但建议装（语音转 16kHz WAV、GIF 取首帧、大图压缩、本地 TTS 转 mp3），不在 PATH 时用 `ffmpegPath` 指定 |
+| 端口 | 6700（OneBot 反向 WS）、8799（控制台）、8798（权限控制台，同时也是入站 webhook 的默认端口，别同时用默认值）、6099（NapCat WebUI）、9880（本地 GPT-SoVITS） |
 
-实现链路：消息里的引用 → `get_msg` 找到被引用消息 → 其中含 `record` 段 → OneBot `get_record`（`out_format` mp3/wav，响应含 `base64`）→ POST `{sttBaseUrl}/audio/transcriptions`（multipart 字段 **`file`** 二进制）→ 转写文本注入会话。
+一台机器只允许一个实例托管 QQ 桥：web 宿主与桌面端抢同一个 6700，只有一个绑得上，另一个每 15 秒重试并在端口释放后自动接管。也别给两个 profile 配不同端口想"都跑"——它们共用同一份数据目录，会互相覆盖状态。
 
-注意事项：
-- 智谱 GLM-ASR-2512 限 wav/mp3、**≤ 30 秒**、≤ 25MB；更长的语音请换 SiliconFlow 等端点
-- 智谱接口的 multipart 字段必须是 `file`（二进制）——文档里写的 `file_base64` 实测会报 1214 错误
+## 常见问题
 
-## 会话分组
+**1. 机器人在线，却一句话都不回。** 先确认不是"故意不回"：白名单为空（默认全拒）、群聊没 @机器人、客户端把 @ 发成纯文本而 `mentionAliases` 没覆盖、`quietHoursEnabled` 生效中。发 `/health` 看运行时状态，或打开控制台「实时事件流」筛"仅被拒/失败"——每条都带中文 reason（例如 `mention: 群聊未 @ 机器人`）。
 
-- 群聊：`sessionMode: chat`（默认）下每个群一个独立会话，全群共享上下文；`user` 下每群每人一个会话
-- 私聊：每个私聊用户一个独立会话，与群聊完全隔离
-- 会话创建时 agent 系统提示注入 chatScope（"你正在 QQ 群 xxx 里聊天"/"你在和用户 xxx 私聊"），并要求不串上下文
-- `/new` 仅重置**当前**会话；会话存内存，宿主重启后重建（不持久化）
+**2. 日志报 6700 被占（EADDRINUSE）。** 这不是崩溃：同机另一个实例（CLI 宿主 / 桌面端）正在托管 QQ 桥，本实例如实报错并每 15 秒重试，占用者退出后自动接管。想固定由某一个托管，就**只在一个 profile 里启用本插件**，不要去改端口。
 
-## 表情系统
+**3. NapCat 连不上 / 二维码在哪。** 反向 WS 地址是 `ws://127.0.0.1:6700/`（不是 6099）；配了 `accessToken` 时两端必须一致。二维码在 NapCat WebUI（6099）；控制台「扫码状态」优先读本机 NapCat 的 `cache/qrcode.png`（官方原生安装器布局），容器部署才用 `docker cp`；设置「QQ助手」面板顶部也有「QQ助手账号（登录 / 扫码）」直达入口。
 
-- 回复文本里写 `[face:鼓掌]` 等标记会替换为对应 CQ 表情段（黄脸表见 `lib/faces.js`，约 70 个）
-- `faceEnabled=true` 时每个会话注册 `qq_face_list` / `qq_face_send` 工具
-- 手动把图片放进 `cwd/qq-faces/` 自动登记为可发送表情（文件名=表情名），删除文件自动剔除
-- `autoCollectStickers=true` 时自动收藏群消息里的图片表情
+**4. 控制台起不来。** 8799 被占时它直接报"端口已被占用"并以退出码 2 退出：`node control/bin/qq-control.mjs --port 8800`。另外 `webhookPort` 默认也是 8798，与权限控制台默认端口相同，两个都要用就改掉其中一个。
 
-## 命令与调试
+**5. 命令被判"没权限"，或机器人只能只读。** 默认角色是 guest：只读、只能访问自己的目录，写文件与 shell 只给 `owner`/`admin`（在 `identity.map`、`identity.groupRoles` 或 `adminUsers` 里配）。`aclEnabled` 打开时以 `acl.db` 为准，用权限控制台查"他到底有什么"，不要靠猜配置。
 
-- `/new`：结束当前会话并开新会话
-- `/status`：查看当前会话状态与 sessionId 前缀
-- 调试日志：`{cwd}/qq-bridge-debug.log`（消息路由、语音转写、agent 事件，按时间戳追加）
-- 宿主错误日志：启动 dsh web 时把 stderr 重定向到文件（如 `D:\qq-work\qq-host-err.log`）可查启动崩溃
-- 关键日志标记：`voice fetched via get_record`、`quoted voice transcribed`、`followup sent (voice)`、`group msg without @bot ignored`
+**6. 语音转文字、TTS、生图分别要准备什么？** 转写默认走 DSH 自带的本地识别（`sttProvider: dsh`）：需要在 profile 里启用实验性的「语音输入」bundle，首次使用会下载模型；也可改成 `cloud` 配自家端点。TTS 与生图 **DSH 与本插件都不自带**，要用就自备服务或密钥；没准备好时功能关着，失败原因会写进 trace 而不是静默。
 
-## 测试
+## 开发与测试
 
-55 个单测脚本，共 3434 项断言（`test/*-unit.mjs`）+ 3 个真机脚本：
+测试都是可直接执行的脚本，多数不起宿主、不联网，用临时目录：
 
 ```sh
-# 1) 单元测试：不联网、不起宿主，纯逻辑 + 临时目录（推荐每次改完都跑）
-node test/control-unit.mjs        # 也可以逐个跑：node test/<name>-unit.mjs
-#    36 个文件：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台…
-#    一次性全跑（PowerShell）：
-#    Get-ChildItem test -Filter '*-unit.mjs' | ForEach-Object { node $_.FullName }
-
-# 2) 回放的端到端验收：真实桥代码 + 真实 OneBot 服务端，沙箱 + dry-run，不需要宿主
-node test/replay-live.mjs
-
-# 3) 真机脚本（需要宿主/控制台已在运行，自己扮演 OneBot 客户端连 6700）
-node test/live-e2e.mjs        # 消息 → 回复 全链路
-node test/live-stream.mjs     # 实时事件流 / 决策链 / 体检接口（控制台 8799）
+npm test                                   # 默认入口：控制台的 HTTP / 体检 / 端口逻辑
+npm run verify                             # 发布前闸门：control-unit + privacy-unit（扫真实 QQ 号 / 密钥）
+node test/<name>-unit.mjs                  # 单测按主题分文件：commands-unit / trace-unit / inbox-unit / acl-unit …
+npm run test:acl                           # 权限模型相关的一串（acl / store / console / gates / enforcement / corpus）
+node test/replay-live.mjs                  # 真实桥代码 + 真实 OneBot 服务端，沙箱 + dry-run，不需要宿主
+node test/live-e2e.mjs                     # 真机：需要宿主在跑（自己扮演 OneBot 客户端连 6700）
+node test/live-stream.mjs                  # 真机：控制台的实时事件流 / 决策链 / 体检接口
 node test/replay-live-host.mjs --token <控制台 token>   # 录制 → 离线回放 → 注入
 ```
 
-老版本的 `sim-*.mjs` 协议模拟脚本保留在 `test/` 下，仍可用于手工排查（`node test/sim-group.mjs` 等，需宿主运行）。
-语音转文字链路建议直接用 QQ 实测（模拟脚本需真实 STT 调用）。
+`test/*-unit.mjs` 是纯逻辑与临时目录，`test/sim-*.mjs` 是老的协议模拟脚本（手工排查用，需宿主运行）。`test/static-unit.mjs` 守静态约束（裸名 import、peer 版本线等），`test/privacy-unit.mjs` 扫描被跟踪文件里不许出现的真实 QQ 号与密钥——改完代码至少跑这两个加相关主题的单测。
 
-## 记忆与人设说明（重要）
+## 风险与合规
 
-本插件**不内置任何人设、偏好或群规则**。小鲸鱼人设、问答偏好、群内行为规则等记忆内容由 **dsh-mnemon 插件**的运行时记忆（`~/.mnemon/runtime/USER.md` + `MEMORY.md`）注入每个 QQ 会话——插件只负责"功能"，记忆只负责"灵魂"，两者完全解耦。换人设只改 Mnemon 记忆，换功能只动本插件。
+- 本插件通过**第三方协议实现**（NapCat 等）接入 QQ，不是腾讯官方接口，与《QQ 软件许可及服务协议》相悖；账号存在被限制登录、冻结甚至永久封禁的风险，同设备/同 IP 的其他账号也可能被波及。**请用机器人小号，不要用主号。**
+- agent 生成的一切内容都以机器人账号发出，发布者承担全部责任；只用于个人学习与小范围自用，不要做批量营销、广告、骚扰或群控。
+- 插件只监听 `127.0.0.1`；不要为了让外网访问而改成 `0.0.0.0`——暴露的是你的机器人账号。语音转写切到云端（`sttProvider: cloud`）会把音频上传第三方，敏感语音不要发；生图与 TTS 同理。
+- 使用第三方协议**风险自负**，本项目不提供任何免封号承诺。完整声明见 [LICENSE](LICENSE)。
 
-## ⚠️ 风险与合规说明（使用前必读）
+## 来源与致谢
 
-### 账号风控风险
-- 本插件通过**第三方协议实现**（NapCat 等）接入 QQ，**不是腾讯官方接口**，与《QQ 软件许可及服务协议》相悖，QQ 官方明确禁止非官方客户端/协议
-- 使用第三方协议存在**账号被限制登录、冻结、甚至永久封禁**的风险，且可能波及其他正常使用的 QQ 账号（同设备/同 IP）
-- 建议使用**机器人小号**运行，绝不要用大号/常用号
-- 常见风控诱因：高频发言、短时间大量消息、发送营销/广告/违规内容、被多人举报、异常登录设备
-- 缓解建议：降低回复频率、仅在小群/自用场景运行、不 24 小时刷屏、严格内容合规
+本项目**衍生自** [cheesehaqi/dsh-qq-onebot-bridge](https://github.com/cheesehaqi/dsh-qq-onebot-bridge)（上游基线 v0.6.3），在其之上继续开发：独立控制台与权限模型（ACL / SQLite）、角色与会话所有权、主体目录隔离、数据根布局、容器部署等；逐项改动见 [CHANGELOG.md](CHANGELOG.md) 与 [LOCAL-PATCH.md](LOCAL-PATCH.md)。采用 MIT 许可（见 [LICENSE](LICENSE)，版权声明为 `dsh-qq-onebot-bridge contributors`），上游原始版权与许可声明一并保留。依赖与致谢：[DeepSeek Harness](https://www.npmjs.com/package/@deepseek-ai/dsh)（插件宿主与 agent 运行时）、[NapCat](https://github.com/NapNeko/NapCatQQ)（QQ 协议端，主要验证目标）、[OneBot v11](https://github.com/botuniverse/onebot-11)（协议规范）。
 
-### 内容风控
-- agent 生成的一切内容都会以机器人账号身份发出，**使用者对该账号发布的内容负全部责任**
-- 建议在人设/系统提示中约束输出合规内容；违规内容既触发账号处罚，也可能带来法律责任
 
-### 安全风险
-- `allowUsers` / `allowGroups` 未配置（为空）时，插件**默认拒绝所有私聊与群消息**——请显式填入自己的 QQ 号与群号后再使用；配置白名单后，白名单外的任何人都无法驱动你的 agent
-- 插件只监听 `127.0.0.1`，不要改成 `0.0.0.0` 暴露公网
-- 语音与图片会上传到第三方云服务（STT API）处理，**敏感语音请勿发送**
+## 相关链接
 
-### 合规提示
-- 仅用于个人学习、内部小范围交流；不得用于批量营销、广告、骚扰、群控等用途
-- 遵守所在地区法律法规与腾讯平台规则
-- 使用第三方协议**风险自负**，本插件不提供任何免封号承诺
-
-### 免责声明
-本插件仅供技术学习与个人研究使用。使用者应自行评估并承担使用第三方 QQ 协议的全部风险与后果。
-
-## 安全注意
-
-- `allowUsers` / `allowGroups` 为空时默认拒绝一切消息——使用前务必填入自己的 QQ 号与群号
-- 端口仅监听 127.0.0.1；不要对外暴露
-- OneBot 实现本身有 QQ 封号风险，使用第三方机器人协议需自行评估
-
-## 调试（v0.4「一切皆可调试」）
-
-每条入站消息都有一个 **traceId**，每个决策点（**包括每一次"不回复/丢弃/降级"**）都会留下 `stage + ok + reason + 耗时`。这是本版本的核心设计理念：出问题时不用猜。
-
-| 想看什么 | 在哪看 |
-|---|---|
-| **6 条硬约束此刻达标吗** | 控制台最上面「**硬约束验收台**」：6 行状态灯 + 机器上现有的证据 + 该点哪里的提示，每 30 秒自动重算 |
-| 单条消息的完整决策链 | 控制台「实时事件流」点任意一行 → 「决策链」显示时间轴、停在哪一步、为什么 |
-| 为什么机器人不回复 | 「实时事件流」筛"仅被拒/失败"，最常见原因直接列出（如 `mention: 群聊未 @ 机器人`） |
-| 每个端口的占用与在线 | 控制台「端口 / 进程」（6700 的连接数即机器人在线） |
-| 一键排查 | 控制台「一键体检」：15-19 项 pass/fail + 修复建议（依赖路径、端口、链路、快照、错误、闸门拒绝…） |
-| 生效配置（为什么功能没生效） | 控制台「运行快照」里的"关闭中的开关"；完整字段在 `qq-runtime.json` 的 `features`（不含任何密钥） |
-| 打包给别人看 | 「导出诊断包」→ 一个 zip（事件流/审计/桥日志/宿主日志/运行快照/体检报告/环境信息） |
-| 文件级排查 | `qq-trace.jsonl`（结构化事件，可 `jq`/grep）、`qq-bridge-debug.log`、`qq-actions.log`（写操作审计）、`qq-host-out.log`/`err.log` |
-
-相关配置：`traceEnabled`（默认开）、`traceLevel`（`debug` 全量 / `warn` 只留问题）、`traceMemorySize`、`traceFile`。
-调试接口（控制台，token + Origin 双重校验）：`/api/trace`、`/api/stream`（SSE）、`/api/runtime`、`/api/diagnose`、`/api/export`。
-
-### 录制 · 离线回放 · 事件注入（v0.4 阶段 3）
-
-前两项解决了"现在发生了什么"，这三项解决"这条消息当时为什么这样、换成别的输入会怎样"。
-
-| 能力 | 怎么用 | 说明 |
-|---|---|---|
-| 录制 | 自动 | 桥收到的每条消息/通知/请求都追加到 `qq-inbox.jsonl`（可 JSON 逐行解析、按大小轮转），只写本机、不改任何回复行为 |
-| 离线回放 | 控制台「录制 · 回放 · 注入」→ 某行「回放这条」／「回放最近 5 条」 | 在**沙箱目录**里用**真实桥代码**重跑这条消息：dry-run 拦截所有出站、不建任何 QQ 连接、源目录一个字节都不改。结论逐条给出"会回复/静默/出错 + 原因 + 会发送什么" |
-| 事件注入 | 控制台填 群号/QQ 号/文本 → 「注入」 | 写一行到 `qq-inject.jsonl`，桥按 `injectIntervalMs`（默认 2s）轮询后**走真实管线**处理；`injectDryRun`（默认开）下所有出站调用被拦截并计数，注入内容永远不会真的发到 QQ |
-
-回放的保真度来自**运行时快照里的线上决策配置**（白名单、安静时段、各功能开关等 28 项，见 `qq-runtime.json` 的 `replay`）：否则插件默认值里"白名单为空 = 拒绝一切"会让回放全部判成静默。回放里**不含真实模型输出**——模型那一轮用一条带 `[回放]` 前缀的模拟回复代替，用来验证链路与分支，不验证措辞。
-
-排障要点：
-
-- 注入通道未开启时会**直接报错并说明开关名**（`injectEnabled`），不会静默丢进队列；
-- 注入触发的 **agent 回合是异步的**：dry-run 窗口只在同步阶段开着，所以模型真正的回复会在事件流里被单独拦下（`注入回合的模型回复已被拦截（dry-run，未发送）：<原文>`）——注入既能走真实管线，又不会漏发一条；真人消息不受影响（收到真实消息立即解除该标记）；
-- 回放的帧在事件流里标为 `replay: 离线回放（沙箱 + dry-run，不碰 QQ）`，注入的帧标为 `inject: 来自注入器`，两者不会互相误判；
-- 桥启动时若队列里已有历史行，会跳过它们并在事件流里记一条"本次启动跳过 N 行（只处理启动后新增的行）"，避免重启后重放旧注入；
-- 注入的帧不会被二次录制（否则回放/注入会互相激发）；
-- 回放沙箱默认保留最近 5 次，更旧的**移入回收站**（`qq-replay/_trash/<日期>/`），不做物理删除。
-
-相关配置：`recordInbound`（默认开）、`inboxFile`、`inboxRedact`、`injectEnabled`（默认关）、`injectFile`、`injectDryRun`（默认开）、`injectIntervalMs`。
-调试接口：`/api/inbox`、`/api/replay`、`/api/inject`、`/api/queue/clear`。
-
-### 硬约束验收台（v0.4 阶段 4）
-
-上面两条解决了"现在发生了什么"和"当时为什么这样"。验收台解决第三个问题：**设计理念有没有真的落地**。
-
-`GET /api/acceptance` 把 6 条硬约束逐条用**机器上现有的产物**算成 `✅ 达标 / ⚠️ 有提示 / ❌ 不达标 / ❔ 证据不足`，并给出证据与下一步：
-
-| 约束 | 判定用的证据 |
-|---|---|
-| ① 无静默分支 | 最近 500 条事件里所有 `ok:false`（被拒/失败）事件是否都带非空 reason；缺的会点名 stage |
-| ② 可关联（traceId） | 消息级事件的 traceId 覆盖率、有多少条消息真正走完 `inbound→reply` |
-| ③ 可回放 | 录制条数 + 最近一次回放的统计与**安全保证**（dry-run 开、QQ 连接 0、cwd 已沙箱化）；dry-run 被关掉直接判不达标 |
-| ④ 可体检 | 体检通过数/失败数/blocker 数与结论，失败项点名 |
-| ⑤ 可导出 | 诊断包会收集的产物有几类在位（或最近一次导出的体积与文件名） |
-| ⑥ 可注入 | 通道开关、dry-run 开关（关掉→不达标，因为会真发 QQ）、已消费行数、以及**拦下过几次异步 agent 回合的回复** |
-
-每一项都能点「去看 →」跳到对应卡片（事件流/决策链/回放结果/体检/日志/注入）；结论为 `all-green / partial / unknown / broken` 四种。
-纯函数实现（`control/lib/acceptance.mjs`），所以每条分支都有断言覆盖；面板每 30 秒自动刷新，回放结束后立刻重算。
-
-## 看得见 · 找得回（v0.5）
-
-v0.5 做两件事：把**已经封装好、却从没接上线**的能力接通，再补上"群里的东西能找回来"。
-
-### 合并转发展开（先修一个违反硬约束的洞）
-
-以前别人把「聊天记录」合并转发给机器人时，`parseMessage` 里根本没有 `forward` 分支，这条消息在传输层就被静默丢掉——**连 trace 都没有**，直接违反 v0.4 的第一条硬约束。现在：
-
-- `forwards` 会被识别，经 `get_forward_msg` 展开成 `[转发聊天记录] 昵称: 内容` 交给模型（默认最多 50 条 / 4000 字，只展开一层，不递归）
-- 群里仍然要 @ 机器人才处理（空文本不再绕过 @ 门与 `acceptPrivate` 门——这两个门都补上了）
-- `forwardExpandEnabled: false` 可关闭；回放/注入模式（dry-run）不访问 QQ，注入时可用 `forwardText` 直接喂一份正文
-
-### 接通的既有能力
-
-| 能力 | 用法 |
-|---|---|
-| 群成员 | `/成员` 看名单（按身份/等级排序，标注头衔与禁言中）· `/成员 @某人` / `/成员 昵称` / `/成员 QQ号` 看详情（身份/等级/头衔/入群时间/最后发言/禁言状态）；agent 工具 `qq_member_info` |
-| 群资料 | `/群信息`（群名/群号/人数与上限/群主/建群时间） |
-| 好友列表 | `/好友`（**隐私项，默认关闭** `friendListEnabled`，且仅私聊里的管理员可用） |
-| 群历史 | agent 工具 `qq_recent_history`（拉本会话最近 N 条，群聊/私聊都支持） |
-| 表情回应 | agent 工具 `qq_react`（给消息贴 👍 之类，而不是发一条消息；写操作，过闸门） |
-| 退群 | `/退群 确认`（**默认关闭** `leaveGroupEnabled`，必须显式二次确认，走闸门） |
-
-### 群资产（只读为主）
-
-| 命令 | 说明 |
-|---|---|
-| `/文件` | 列群文件与文件夹（文件名/大小/上传者/时间） |
-| `/文件 <文件夹名>` | 进文件夹列文件 |
-| `/取 <文件名>` | 下载群文件到 `cwd/qq-files/` 并**只发到发起人私聊**（不往群里丢文件）；精确/前缀/模糊匹配，文件名消毒（去路径、去 Windows 非法字符、保留名加前缀） |
-| `/相册` | 列群相册（NapCat `get_qun_album_list`） |
-| `/ocr` | 引用一张图片发 `/ocr`，用 NapCat 的 `ocr_image` 读出图里的文字（不消耗模型） |
-
-### 历史检索与归档
-
-- 每条白名单会话的真实消息按天归档到 `cwd/qq-history/YYYY-MM-DD.jsonl`；**注入/回放的假事件不入档**，`/` 开头的命令也不入档（否则每次 `/找 X` 都会命中自己刚敲的查询词）
-- `/找 关键词`（空格分隔 = 同时包含，大小写不敏感）检索本会话最近 N 天；agent 工具 `qq_search_history` 同源同口径
-- 保留期默认 90 天，过期分片在宿主启动时**移入** `qq-trash/<日期>/` 而不是删除
-- 控制台新增「群资产 · 历史检索」卡片：看归档体积与时间范围、直接检索（与群内 `/找` 复用同一套解析）
-
-新增配置（括号内为默认值）：`forwardExpandEnabled`(true) `forwardMaxNodes`(50) `forwardMaxChars`(4000) `memberQueryEnabled`(true) `memberListLimit`(20) `friendListEnabled`(false) `historyQueryEnabled`(true) `historyQueryLimit`(20) `reactToolEnabled`(true) `leaveGroupEnabled`(false) `ocrEnabled`(true) `ocrMaxImages`(3) `groupFileEnabled`(true) `groupFileDownloadEnabled`(true) `groupFileListLimit`(20) `groupFileMaxBytes`(50 MiB) `albumEnabled`(true) `historyArchiveEnabled`(true) `historyArchiveDir`("") `historyArchiveKeepDays`(90) `historySearchEnabled`(true) `historySearchDays`(7) `historySearchLimit`(20)。
-
-## 独立控制台（control/，v0.4.0）
-
-插件自带一个**独立的本地运维端**，不依赖 DSH 桌面端：宿主挂掉时它照常可用，端口与进程一目了然。
-
-```sh
-# 启动（默认 http://127.0.0.1:8799，启动后打印带 token 的地址）
-npm run control            # 或 node control/bin/qq-control.mjs --open
-# 也可以双击 control/启动控制台.bat
-```
-
-| 能力 | 说明 |
-|---|---|
-| 端口总览 | 控制台 8799 / 宿主（端口**自动识别**正在跑的 dsh，默认 3080） / OneBot 6700 / NapCat 6099 / GPT-SoVITS 9880 的监听状态、占用 PID 与进程名；6700 的连接数即"机器人在线" |
-| 启停 | 启动/停止/重启宿主（自动带 `--no-open`，日志重定向到 `qq-host-out.log`/`qq-host-err.log`）、启动/停止 NapCat 与 QQ、启动/停止 GPT-SoVITS、一键全停 |
-| 启动预检 | 起宿主前检查 3080/6700，被占则直接报「端口←进程#PID」，而不是静默失败 |
-| 释放端口 | 对占用受管端口的进程一键 `taskkill /T /F`（护栏：只允许受管端口占用者与已知机器人进程，绝不误杀无关 PID） |
-| 日志 | 宿主 stdout / stderr / 桥调试日志，自动跟随、可切行数 |
-| 扫码状态 | 显示 NapCat 二维码图片是否存在、是否新鲜，并一键打开 6099 扫码页 |
-| 配置 | `qq-control.json` 是端口与路径的唯一真源（自动探测 node、dsh bin.js、NapCat、TTS 脚本；可在 UI 里改路径）；**6700 被 NapCat 配置写死，勿改** |
-| 调试 | 「录制 · 回放 · 注入」：列出 `qq-inbox.jsonl` 里录到的每条消息，可一键离线回放（沙箱 + dry-run）或注入合成事件；注入队列状态（行数 / 本次已消费 / dry-run）直接显示 |
-| 验收 | 顶部「硬约束验收台」：6 条硬约束的实时证据（无静默分支 / traceId 贯穿 / 可回放 / 可体检 / 可导出 / 可注入），不达标项直接说明该点哪里；`GET /api/acceptance` |
-| 安全 | 只绑 `127.0.0.1`；所有 API 需要 token；带 `Origin` 的跨站请求一律拒绝 |
-
-> 以后若想做真正的托盘/桌面程序，直接包一层 Electron/Tauri 复用同一套 HTTP API 即可，逻辑无需重写。
-
-## 系统配置：gh / git 身份 / DSH 工作区（v0.7.1）
-
-**镜像里只有 gh 的二进制，没有任何凭据**；这些都属于「用户自己的系统配置」，在控制台 `/system` 页里配
-（Docker 部署是 http://127.0.0.1:8798/system ），落盘在数据根，换镜像不丢。
-
-| 配置项 | 渲染成什么 | 生效时机 |
-|---|---|---|
-| GitHub token + 账号 | `<HOME>/.config/gh/hosts.yml`（0600），并写好 git 凭据助手 `!gh auth git-credential` | 保存即生效（容器内读同一份文件） |
-| git 用户名 / 邮箱 | `<HOME>/.gitconfig` 的 `[user]` | 保存即生效 |
-| DSH 工作区 | `<数据根>/state/workspace.effective` → entrypoint 据此 `cd` | 重启 harness 后生效 |
-
-约束（有单测守着，见 `test/system-config-unit.mjs`）：
-
-- **只补缺，不覆盖**：git 键已存在、该 host 已有 token 一律保留；你手改过的值不会被镜像或重启冲掉
-- **工作区必须可写**：只读或不可达的目录**不会被采用**（宁可继续用旧的，也不给你一个写不进去的工作区）；
-  可写范围 = 部署时的 `QQ_WORKSPACE_ROOT`，范围内的目录保存后重启即切换，父目录可写时会自动创建
-- **外部挂载优先**：`GIT_CONFIG_GLOBAL` / `GH_CONFIG_DIR` 由环境显式指定时（开发机挂宿主配置）自动跳过，不动宿主文件
-- **token 只写不读**：接口与报告里只有掩码（`ghp_…abcd（40 字符）`），审计日志也不含原文
-
-命令行也能跑（容器启动时 entrypoint 就是这么调的）：
-
-```sh
-node control/bin/qq-system-config.mjs            # 渲染一次并写报告
-node control/bin/qq-system-config.mjs --dry-run  # 只报告不动文件
-```
-
-## 隐私与脱敏
-
-出问题排查往往要把日志发给别人，所以本插件对"数据会去哪"有明确约定：
-
-| 项 | 约定 |
-|---|---|
-| 诊断包 | 「导出诊断包」默认勾选**脱敏**：QQ 号按位掩码（保留前两位）、消息原文替换为「[已脱敏 N 字]」，包内附 `REDACTED.json` 说明口径；取消勾选才导出明文（会有提醒） |
-| 运行产物 | `qq-inbox.jsonl`（消息原文）、`qq-trace.jsonl`（会话键 + 文本片段）、`qq-runtime.json`、`qq-actions.log` 等只写本机工作目录，且**全部被 `.gitignore` 覆盖**（`qq-*/`、`qq-*.json`、`qq-*.jsonl`、`qq-*.log` 通配 + 逐项列出），cwd 恰好在仓库里也不会误提交 |
-| 录制脱敏 | `inboxRedact: true` 可在录制阶段就把 QQ 号脱敏 |
-| 仓库本身 | 不含任何密钥/口令/真实 QQ 号：密钥只存在于你的 DSH profile 配置（仓库外）；`test/privacy-unit.mjs` 每次跑测试都会重新扫描全部被跟踪文件（真实号从你本机私有配置或 `DSH_QQ_PRIVATE_IDS` 现取，测试文件里不含真实号） |
-| 控制台 | 只绑 `127.0.0.1`，所有接口需 token（存在被忽略的 `qq-control.json`），拒绝跨站 Origin |
-
-> 部署事实：本插件是 **DSH bundle**，运行在 DSH profile 内，`@deepseek-ai/dsh-*`、`@deepseek-ai/schemastery` 等官方 peer 依赖随 profile 一起装好。**官方包必须写全作用域名**：不带作用域的 `schemastery` 是另一个包（3.18.0），只有在"别的插件恰好把它 hoist 到共享 node_modules"时才能解析——v0.4.0 之前 `lib/` 正是这么写的，换到干净环境立刻 `ERR_MODULE_NOT_FOUND`（[issue #1](https://github.com/cheesehaqi/dsh-qq-onebot-bridge/issues/1)）；现已统一用作用域名，并由 `test/static-unit.mjs` 静态守住（裸名/未声明的 import 直接测试失败）。`ws` 是普通运行时依赖，本地目录安装要按上面「安装」一节先 `npm install`。把 `lib/` 单独拷出来裸跑仍然跑不起来（设计如此，不是缺依赖）。
-
-## 更新日志
-
-最近五个版本（始终滚动展示）：
-
-- **v0.6.3** — 「账号入口 + 面板内一键启动 NapCat」：设置页「QQ助手」面板顶部新增一组 **「相关链接」**（整体不拆、贴着头放，顺序 `account → changelog → readme-debug → console`），第一条即 **「QQ助手账号（登录 / 扫码）」**——指向宿主自己的 `GET /qqai/account`：服务端读 `bootmain/config/webui.json` 里的 token 后 **302 到 `/webui/?token=<token>`**，点开就是已登录的 NapCat 页面，不用手抄密钥（token 只出现在 302 的 `Location`，不进面板载荷）。落点形状按 NapCat 4.18.28 的前端实现 + 本机实测确定：hash 由前端计算、落点必须带尾斜杠。同一面板新增 **「快捷操作」**：`启动 NapCat` 与 `重新登录（扫码）`，实时状态取自载荷的 `napcat` 字段；重新登录**只按加载器 PID** 清理，绝不按镜像名杀 QQ。启动成功后 **二维码直接显示在面板里**（`GET /qqai/napcat/qr` 提供 `cache/qrcode.png`，超过 5 分钟视为过期），面板会自动等待并显示它。启动路径重做：**子进程不得带 `detached`**（本机实测带 detached 时命令根本不执行）、提权后需自行 `cd /d`（`%cd%` 会变成 `System32`）、复杂命令不再经 `cmd /c` 传参（引号会被打乱），改为生成**可审计的垫片脚本** `<cwd>\qq-napcat-launch.cmd` 并由提权命令只执行它；成功判据改为**垫片心跳**，失败一律如实回报。修复：浏览器点击入口被同源守卫判 403（导航请求不带 `Origin`，自 v0.6.0 起存在）、桌面端相对入口无法打开（改为 `?format=json` + `window.open` 绝对地址）、点「刷新二维码」整页白屏（整对象 `setState` 且缺少渲染边界）。隐私：面板回显日志前对密钥打码、启动日志用 `icacls` 收紧权限、仓库移除机器人真实昵称，并新增「真机日志片段 / 私有昵称」两道自动检查。`settings-unit` 86 → **178** 条断言；全量 **57 套 / 3851 断言全绿**
-- **v0.6.2** — 「功能说明补全」：真机反馈"有些功能说明不是很全，比如 AI 生图就写了串英文、没说需要额外软件或模型"。59 个开关里原来有 21 行提示是空的——现在**每行都讲清"做什么 / 需要准备什么 / 关掉会怎样"**（25–235 字），并给需要外部条件的开关加上**依赖小标签**：`需外部服务`（生图 API、TTS：本地 GPT-SoVITS 或云端）、`需密钥`（转写）、`需词表文件`（内容过滤/关键词）、`需配置`、`需群管理员`、`需 NapCat 扩展`、`不需模型`；16 个开箱即用的不带标签。说明支持极简加粗并带 `title` 全文。新增 5 条守卫（含"schema 里带 apiKey/baseUrl/provider/model 的功能必须标依赖"这条证据型检查）；「非默认」徽标补上方向（实测 9 个非默认全是"默认关被打开"，现在写成 **非默认·默认关** / **非默认·默认开**）。另外把依赖口径写在明处：**TTS 与生图 DSH 与本插件都不自带**（要你自备服务或密钥）、**语音转文字 DSH 自带**（实验性「语音输入」bundle，需在该 profile 里自行启用，首次用会下载本地 SenseVoice 模型），语音与媒体那一组加了组级提示，依赖标记改成「需自备服务 / 需自备密钥 / 需自备词表」；需要额外安装的一律默认关（`voiceReadingEnabled` 由默认开改为默认关），并有断言钉住。并把**语音转文字改成默认走 DSH 自带的本地识别**（sttProvider 默认 dsh：宿主服务 speechToText + 本地 SenseVoice，音频不出本机、不需密钥；QQ 语音统一用 ffmpeg 转 16kHz 单声道 WAV，仍可显式设成 cloud 走云端），新增 	est/stt-unit.mjs（24 条）。全量 **57 套 / 3765 断言全绿**
-- **v0.6.1** — 「开关配色修正」：真机反馈"关了以后感觉按钮消失了一样"。原因是 OFF 态被做成了**卡片同色轨道 + 白圆点**，浅色主题下白底白点＝隐形。现在**照抄平台自己的开关样式**（`dsh-client-ui-primitives` 的 `Switch.module.css`）：轨道 OFF `--dsw-alias-border-l3`（浅色 `#0000001f` / 深色 `#ffffff29`）、ON `--dsw-alias-brand-primary`；圆点 OFF `--dsw-alias-switch-thumb`、ON `--dsw-alias-label-primary-foreground`；几何也对齐（36×20 / 内边距 2 / 圆点 16 / 位移 16 / 120ms）。语义改用 `role="switch"` + `aria-checked`（与官方一致，视觉不会和无障碍语义打架）。新增 4 条断言钉住官方 token 与"状态 → aria-checked"映射。全量 **56 套 / 3728 断言全绿**
-- **v0.6.0** — 「轻量化设计」：**DSH 设置里多了一页「QQ助手」**，常用开关点一下就启停——7 组 59 个开关（从 224 个配置键里精选；进阶三组默认折叠），每行显示中文标签、"关掉会怎样"、**配置键名**，并标出「非默认」「待重启」；点一下即写入 profile 的 `cordis.patch.yml`，**只改本插件那一段**（原子写 + `.bak-qqai` 备份；白名单外/非布尔一律 400 拒绝），随后 DSH 热重载该插件、开关生效。轻量体现在：**零新增依赖**（客户端只用宿主自带的 react，手写 `window.__ModuleLoader__.load` bundle，不引构建器）、样式全走 DSH 主题变量、`ctx.inject(['webServer'])` 所以没有 web 服务的宿主上这段根本不执行；路由会在插件重挂时**注销**，不会撞 duplicate route。另收口 v0.5.9 后真机跑出的问题：@ 被客户端发成纯文本时也算 @、命令粘参（`/设管理123`）不再丢给模型、写操作失败不再把 NapCat 原始 JSON 贴进群、`bot_offline` 有明确告警。`static-unit` 21 → **26**，新增 `settings-unit`（86 条），全量 **56 套 / 3724 断言全绿**
-- **v0.5.9** — 「兼容 DSH 0.2 与官方桌面端」：DSH 运行时升到 **0.2.0-rc.2** 后，profile 因为插件的 peer 范围只声明到 `^0.1.x` 而**直接拒载**（`skipping profile bundle … is incompatible with dsh 0.2.0-rc.2`）——QQ 桥因此静默停摆了六天；官方新出的桌面端用的是**同一个运行时版本**，一起修。① 六个 `@deepseek-ai/dsh-*` 的 peer 范围加 `^0.2.0-rc.2`：CLI/web 宿主与桌面端都能直接加载，**不再需要 `dsh plugin allow-version` 豁免**（真机验证：撤销豁免后 `--dump-config` 不再 skip，插件正常挂载、6700 正常监听）。② **端口被占不再崩、不再卡启动**：`OneBotServer.start()` 从"返回 void + `emit('error')` 无订阅者直接抛 + Promise 永不 resolve"改成如实返回 `{ ok:false, code, reason }`，插件入口按 15 秒退避重试；真机三实例实测——占用者被杀后**重试者 15 秒内自动接管 6700 并启动桥**。③ `stop()` 对"从未监听成功"的实例也安全（重试不泄漏 Server）。④ 新增静态守卫：`dsh-*` 的 peer 范围必须覆盖 0.2 线，下次运行时升级忘了改这里会直接测试红。⑤ **控制台「打开扫码页」不再点进「token 无效」**：新增 `GET /api/napcat/webui`，从 `webui.json` 读出 NapCat 自己的 token 拼进地址（token 不落快照、不进诊断包）。⑥ **群里 @ 了机器人却一个字都不回**（真机抓到的现场 bug）：有些 QQ 客户端把 @机器人 发成**纯文本**（正文里是 "@昵称"、一个 at 段都没有），只认 at 段的门禁会把它静默丢掉；现在按名字（自动学昵称/群名片 + 新配置 `mentionAliases`）也算 @，并且会把 `@名字` 摘掉，让 `/命令` 回到行首（否则命令会被当成聊天丢给模型）。`onebot-api-unit` 44 → **61**、`control-unit` 152 → **161**、`commands-unit` 72 → **78**、`static-unit` 17 → **21**，全量 **55 套 / 3633 断言全绿**
-
-**更早的版本（v0.4 线及之前）见 [CHANGELOG.md](CHANGELOG.md)** —— 完整历史、每个版本的缺陷清单与测试计数都在那里。
+- [CHANGELOG.md](CHANGELOG.md) — 逐版本记录与缺陷清单（当前 v0.7.3）；[LOCAL-PATCH.md](LOCAL-PATCH.md) — 本地改动、人设 / 身份 / 工作区说明
+- [examples/cordis.patch.example.yml](examples/cordis.patch.example.yml) — 完整配置示例
+- [NapCat 文档](https://doc.napneko.icu/) · [OneBot v11 规范](https://github.com/botuniverse/onebot-11); 部署包 [zfqxuz/qqbot-deploy](https://github.com/zfqxuz/qqbot-deploy)（Docker / 宿主一行装；含 `HOST-INSTALL.md`、`UPDATE-UNINSTALL.md`）

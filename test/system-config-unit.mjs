@@ -27,6 +27,14 @@ function check(name, ok, extra = '') {
 
 const REPO = join(fileURLToPath(import.meta.url), '..', '..')
 const tmp = mkdtempSync(join(tmpdir(), 'qq-syscfg-test-'))
+// gh 可执行文件的位置：容器里是 /usr/local/bin/gh，开发机 / CI 上不一定在那儿 ——
+// 以前这台机器上跑就有 2 条"环境性失败"，看着像代码坏了。这里明确指定一个存在的桩文件
+// （模块在 import 时读 QQ_GH_BIN，所以必须在 import 之前设好）。
+const ghStubDir = join(tmp, 'bin')
+mkdirSync(ghStubDir, { recursive: true })
+const ghStub = join(ghStubDir, 'gh')   // 文件名必须是 gh：断言里比的是 "... gh auth git-credential"
+writeFileSync(ghStub, '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+process.env.QQ_GH_BIN = ghStub
 const { applySystemConfig, parseGhHosts, renderGhHosts } = await import(join(REPO, 'control/lib/system-config-apply.mjs'))
 
 const newDir = (name) => { const d = mkdtempSync(join(tmp, `${name}-`)); return d }

@@ -19,6 +19,13 @@ import { BROWSER_CANDIDATES, buildOpenCommand, openPanel, pickBrowser } from '..
 
 let passed = 0
 let failed = 0
+// Windows-only 的检查（cmd.exe / PowerShell 垫片行为）：在 Linux/macOS 上跑了没有意义，
+// 以前会红成"4 条既有失败"，于是"测试全绿"根本无从判断。这里明确 SKIP，不计入失败。
+let skipped = 0
+function checkWin(name, ok, extra = '') {
+  if (process.platform !== 'win32') { skipped++; console.log('SKIP', name, '（Windows-only）'); return }
+  check(name, ok, extra)
+}
 function check(name, ok, extra = '') {
   if (ok) { passed++; console.log('PASS', name, extra) }
   else { failed++; console.log('FAIL', name, extra) }
@@ -426,7 +433,7 @@ check('两个连接都能各自拿到完整历史（不互相偷事件）', conn
 
 // --------------------------------------------------------------- helpers -----
 const ran = await run('cmd.exe', ['/c', 'echo', 'hi'])
-check('run() 返回 stdout 且不抛错', ran.ok === true && ran.stdout.includes('hi'), JSON.stringify(ran).slice(0, 80))
+checkWin('run() 返回 stdout 且不抛错', ran.ok === true && ran.stdout.includes('hi'), JSON.stringify(ran).slice(0, 80))
 const killed = await killTree(999999, { exec: (c, a, o, cb) => (typeof o === 'function' ? o : cb)(new Error('not found'), '', 'no such pid') })
 check('killTree 失败时安全返回', killed.ok === false && killed.stderr === 'no such pid')
 check('inspect 在假 exec 下可用', (await inspect({ ports: DEFAULT_PORTS, exec: okExec })).ports.length === 5)
@@ -470,7 +477,7 @@ check('★提权命令只把垫片路径交给 cmd（不允许再塞复杂内层
   launch.args.join(' ').slice(-170))
 check('napcatLaunchCommand 垫片里用 call + 引号包住（括号路径不会被 cmd 剥引号）',
   shimText(launch).includes('call "C:\\NapCat\\bootmain\\launcher.bat"'), shimText(launch))
-check('napcatLaunchCommand 垫片里先 cd /d 到脚本所在目录（提权后 %cd% 会跑到 System32）',
+checkWin('napcatLaunchCommand 垫片里先 cd /d 到脚本所在目录（提权后 %cd% 会跑到 System32）',
   shimText(launch).includes('cd /d "C:\\NapCat\\bootmain"'), shimText(launch))
 check('napcatLaunchCommand 垫片里把输出重定向到日志（提权窗口是隐藏的，报错要留痕）',
   shimText(launch).includes('>> "C:\\QQAI\\qq-napcat-launch.log" 2>&1'), shimText(launch))
@@ -496,7 +503,7 @@ check('restartNapcatCommand 没有 PID 时拒绝执行（不退回按名杀）',
 check('napcatRestartCommand 清理后仍会启动 launcher.bat', shimText(restart).includes('call "C:\\NapCat\\bootmain\\launcher.bat"'))
 // 回归：清理与启动必须落在**同一个提权进程**里（都写在同一个垫片里），否则非提权的 taskkill 杀不掉提权拉起的 QQ
 const restartShim = restart.shim.content
-check('清理与启动在同一个垫片里（不是只把启动提权）',
+checkWin('清理与启动在同一个垫片里（不是只把启动提权）',
   restartShim.indexOf('taskkill') < restartShim.indexOf('launcher.bat')
   && restartShim.includes('cd /d "C:\\NapCat\\bootmain"'),
   restartShim.slice(0, 240))
@@ -509,7 +516,7 @@ check('提权命令里的 /c 只带垫片路径（内层命令一律走垫片文
   launch.args.join(' ').includes(`@('/c','${SHIM}')`) && !launch.args.join(' ').includes('&&')
   && !launch.args.join(' ').includes('2>&1'), launch.args.join(' ').slice(0, 240))
 const quoted = napcatLaunchCommand("D:\\O'Brien\\napcat.bat", { shimFile: "D:\\O'Brien\\qq-napcat-launch.cmd" })
-check('路径含单引号时 PowerShell 单引号成对转义（否则脚本解析失败）',
+checkWin('路径含单引号时 PowerShell 单引号成对转义（否则脚本解析失败）',
   quoted.ok === true && quoted.args[4].includes("D:\\O''Brien\\qq-napcat-launch.cmd")
   && quoted.shim.content.includes("cd /d \"D:\\O'Brien\""),
   `${quoted.args[4].match(/FilePath = .*?;/)?.[0]} ｜ ${quoted.shim.content.split('\r\n')[2]}`)

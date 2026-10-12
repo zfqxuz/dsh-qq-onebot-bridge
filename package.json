@@ -1,16 +1,16 @@
 {
-  "name": "dsh-qq-onebot-bridge",
-  "version": "0.7.1",
-  "description": "QQ ↔ DeepSeek Harness agent bridge over OneBot v11 (reverse WebSocket). v0.5.x \"See it, find it\": merged-forward chat records are expanded for the model instead of being dropped, group member/roster and group-info queries, recent-history and emoji-reaction agent tools, group file listing and download, group albums, image OCR, and a keyword-searchable per-day message archive (/找) — plus the whole v0.4 debugging stack (trace id on every message, a Chinese reason on every silent drop, structured JSONL events, live SSE event stream with per-message decision chains, one-click diagnosis, diagnostic-bundle export, offline sandboxed dry-run replay and event injection, a 6-hard-constraint acceptance page) and a standalone control console (control/). Independent bundle; remove anytime: dsh plugin --profile web remove dsh-qq-onebot-bridge",
+  "name": "@zfqxuz/dsh-qq-onebot-bridge",
+  "version": "0.7.3",
+  "description": "QQ ↔ DeepSeek Harness agent bridge over OneBot v11 (reverse WebSocket)：把 QQ 群/私聊接到 DSH agent，自带权限（RBAC）、可视化控制台与可回放调试",
   "type": "module",
   "main": "lib/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cheesehaqi/dsh-qq-onebot-bridge.git"
+    "url": "git+https://github.com/zfqxuz/dsh-qq-onebot-bridge.git"
   },
-  "homepage": "https://github.com/cheesehaqi/dsh-qq-onebot-bridge#readme",
+  "homepage": "https://github.com/zfqxuz/dsh-qq-onebot-bridge#readme",
   "bugs": {
-    "url": "https://github.com/cheesehaqi/dsh-qq-onebot-bridge/issues"
+    "url": "https://github.com/zfqxuz/dsh-qq-onebot-bridge/issues"
   },
   "bin": {
     "qq-control": "./control/bin/qq-control.mjs"
@@ -18,7 +18,7 @@
   "scripts": {
     "control": "node control/bin/qq-control.mjs",
     "test": "node test/control-unit.mjs",
-    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs && node test/system-config-unit.mjs && node test/dsh-port-unit.mjs && node test/proxy-state-unit.mjs",
+    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/session-conflict-unit.mjs && node test/harness-owner-unit.mjs && node test/ownership-console-unit.mjs && node test/model-credentials-unit.mjs && node test/probe-unit.mjs && node test/harness-supervisor-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs && node test/system-config-unit.mjs && node test/dsh-port-unit.mjs && node test/qr-source-unit.mjs && node test/proxy-state-unit.mjs && node test/privacy-unit.mjs",
     "test:persona": "node test/persona-unit.mjs",
     "test:group-role": "node test/group-role-unit.mjs",
     "test:acl": "node test/acl-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-gates-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs",
@@ -36,7 +36,11 @@
     "test:identity": "node test/identity-seed-unit.mjs",
     "test:system-config": "node test/system-config-unit.mjs",
     "test:dsh-port": "node test/dsh-port-unit.mjs",
-    "test:proxy-state": "node test/proxy-state-unit.mjs"
+    "test:proxy-state": "node test/proxy-state-unit.mjs",
+    "privacy": "node test/privacy-unit.mjs",
+    "verify": "node test/control-unit.mjs && node test/privacy-unit.mjs",
+    "prepublishOnly": "npm run verify",
+    "test:ownership": "node test/session-conflict-unit.mjs && node test/harness-owner-unit.mjs && node test/harness-supervisor-unit.mjs && node test/probe-unit.mjs && node test/ownership-console-unit.mjs && node test/model-credentials-unit.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
@@ -52,7 +56,8 @@
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "keywords": [
     "dsh",
@@ -99,5 +104,11 @@
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

@@ -87,6 +87,10 @@
       <h2 class="qqc-h">容器</h2>
       <table class="qqc-table" id="docker"></table>
     </section>
+    <section class="qqc-card">
+      <h2 class="qqc-h">会话所有权</h2>
+      <table class="qqc-table" id="ownership"></table>
+    </section>
   </div>
 
   <section class="qqc-card">
@@ -177,6 +181,30 @@ async function refresh() {
     + tr('NapCat WebUI 6099', dot(p.napcatUsable ? 'ok' : (p.napcatWebuiPortOpen ? 'warn' : 'bad'), p.napcatUsable ? '可用' : '不可用', `HTTP ${p.napcatProbe.code || '-'}`)));
 
   setHtml('docker', (d.docker.containers || []).map((c) => tr(c.name, dot(c.running ? (c.healthy || !/healthy/.test(c.status) ? 'ok' : 'warn') : 'bad', c.running ? (c.healthy ? 'healthy' : '运行中') : '未运行', c.status))).join('') || '<tr><td class="qqc-empty">docker 不可用</td></tr>');
+
+  // [本地补丁] 会话所有权（SPEC §3 L1）：谁在托管、名册、容器是否在待机
+  const own = d.ownership || { available: false, roster: [], note: '' };
+  const ownRows = [];
+  if (own.available) {
+    ownRows.push(tr('当前托管', own.owner
+      ? dot('ok', own.ownerText, own.owner.kind === 'host' ? '宿主 dsh 在托管，容器不抢' : (own.owner.kind === 'container' ? '容器 harness 在托管' : '桌面端在托管'))
+      : '<span class="qqc-sub">名册为空</span>'));
+    for (const item of own.roster || []) {
+      ownRows.push(tr((item.isOwner ? '★ ' : '· ') + item.kind, dot(item.isOwner ? 'ok' : 'warn', item.isOwner ? 'owner' : '待机',
+        `pid ${item.pid}${item.port ? ' · 端口 ' + item.port : ''} · 心跳 ${item.ageSeconds}s · v${item.version || '-'}`)));
+    }
+    if (own.standby) ownRows.push(tr('容器待机', dot('warn', `${own.standby.ageSeconds}s 前的说明`, esc(own.standby.reason || ''))));
+    if (own.note) ownRows.push(tr('说明', `<span class="qqc-sub">${esc(own.note)}</span>`));
+  } else {
+    ownRows.push(tr('状态', '<span class="qqc-sub">还没有 harness 登记心跳（旧版本插件不写名册）</span>'));
+  }
+  // [本地补丁] 模型凭据（SPEC §3 L4）：只显示结论与引导，不显示任何 key
+  const mc = d.modelCredentials;
+  if (mc) {
+    ownRows.push(tr('模型凭据', dot(mc.configured ? 'ok' : 'warn', mc.configured ? '已配置' : '未检测到',
+      esc(String(mc.guide || '').slice(0, 160)))));
+  }
+  setHtml('ownership', ownRows.join(''));
 
   const b = d.bridge;
   setHtml('bridge', b.available

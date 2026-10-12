@@ -1,16 +1,17 @@
 /**
  * DSH 宿主端口解析的测试（[本地补丁] 2026-10-12）
  *
- * 这块以前是控制台最硬的一根写死默认值（3080）。这个测试锁住三件事：
+ * 这块以前是控制台最硬的一根写死默认值（3080）。这个测试锁住四件事：
  *   1. 日志/地址文本里要取**最后一次**出现的端口（日志是追加的，第一条往往是旧的）；
- *   2. 候选顺序：显式 env → 控制台配置 → 正在跑的进程 → 登记地址 → 日志 → 默认值；
+ *   2. 候选顺序：显式 env → harness 容器（docker inspect）→ 控制台配置 → 正在跑的进程 → 登记地址 → 日志 → 默认值；
  *   3. 没有 env、没有配置文件、没有 /proc 时，必须老老实实回落到 3080 并标明"默认值"，
  *      不允许猜一个具体端口冒充"运行事实"。
+ *   4. 宿主模式（没有 docker）不能因为这条新来源报错或算错 —— 查不到就当没有。
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DEFAULT_DSH_PORT, configuredHostPort, dshPortCandidates, lastUrlPort, parseDshCmdline, scanDshProcesses } from '../control/lib/dsh-port.mjs'
+import { DEFAULT_DSH_PORT, configuredHostPort, containerDshPort, dshPortCandidates, lastUrlPort, parseDshCmdline, scanDshProcesses } from '../control/lib/dsh-port.mjs'
 
 let passed = 0
 let failed = 0
@@ -68,7 +69,7 @@ writeFileSync(join(dataRoot, 'logs', 'dsh-web.log'), 'dsh web: http://127.0.0.1:
 const configFile = join(tmp, 'qq-control.json')
 writeFileSync(configFile, JSON.stringify({ ports: { host: 3092 } }), 'utf8')
 
-const all = dshPortCandidates({ env: { QQ_DSH_PORT: '3093' }, dataRoot, configFile, procRoot })
+const all = dshPortCandidates({ env: { QQ_DSH_PORT: '3093' }, dataRoot, configFile, procRoot, inspect: () => '' })
 // 注意：3080 同时被"进程(pid 1111)"和"默认值"占着，去重后保留更靠前的"进程"来源，
 // 所以这条里 3080 出现一次、位置在进程那一段，末尾不会再补一个"默认值"。
 check('优先级顺序（env → 配置 → 进程 → 登记 → 日志 → 默认）',
@@ -78,10 +79,35 @@ check('每项都带可读的来源说明', all.every((c) => typeof c.source === 
 check('来源里点明了 pid', all.some((c) => c.port === 3084 && c.source.includes('2222')))
 check('去重：3080 只出现一次', all.filter((c) => c.port === 3080).length === 1)
 
-const noEnv = dshPortCandidates({ env: {}, dataRoot, configFile, procRoot })
+// ===== 4b. 容器模式：从 harness 容器的 env 里读 DSH_PORT =====
+const containerEnv = 'PATH=/usr/bin\nDSH_PORT=3081\nQQ_WORKSPACE=/home/user/ws\n'
+check('docker inspect 的 env 里认出 DSH_PORT', containerDshPort({ env: {}, inspect: () => containerEnv }) === 3081)
+check('容器名可覆盖（QQ_HARNESS_CONTAINER）', (() => {
+  let seen = ''
+  containerDshPort({ env: { QQ_HARNESS_CONTAINER: 'my-harness' }, inspect: (name) => { seen = name; return containerEnv } })
+  return seen === 'my-harness'
+})())
+check('没有 docker / 没有那个容器 → null（宿主模式不受影响）', containerDshPort({ env: {}, inspect: () => '' }) === null)
+check('容器 env 里没写 DSH_PORT → null', containerDshPort({ env: {}, inspect: () => 'PATH=/usr/bin\n' }) === null)
+check('inspect 抛错也不算数', containerDshPort({ env: {}, inspect: () => { throw new Error('docker not found') } }) === null)
+
+const withDocker = dshPortCandidates({
+  env: { QQ_DSH_PORT: '3093' }, dataRoot: join(tmp, 'empty'), configFile: join(tmp, 'missing.json'),
+  procRoot: join(tmp, 'nope'), inspect: () => containerEnv,
+})
+check('容器来源排在 env 之后、且在默认值之前',
+  withDocker.map((c) => c.port).join(',') === '3093,3081,3080' && withDocker[1].source.includes('harness 容器'),
+  withDocker.map((c) => `${c.port}(${c.source})`).join(' '))
+check('容器端口和 env 相同时去重（只留一次）',
+  dshPortCandidates({
+    env: { QQ_DSH_PORT: '3081' }, dataRoot: join(tmp, 'empty'), configFile: join(tmp, 'missing.json'),
+    procRoot: join(tmp, 'nope'), inspect: () => containerEnv,
+  }).filter((c) => c.port === 3081).length === 1)
+
+const noEnv = dshPortCandidates({ env: {}, dataRoot, configFile, procRoot, inspect: () => '' })
 check('没有 env 时用配置里的 3092', noEnv[0].port === 3092 && noEnv[0].source.includes('qq-control.json'))
 
-const bare = dshPortCandidates({ env: {}, dataRoot: join(tmp, 'empty'), configFile: join(tmp, 'missing.json'), procRoot: join(tmp, 'nope') })
+const bare = dshPortCandidates({ env: {}, dataRoot: join(tmp, 'empty'), configFile: join(tmp, 'missing.json'), procRoot: join(tmp, 'nope'), inspect: () => '' })
 check('什么都没有 → 只有默认 3080，且标明来源是默认值',
   bare.length === 1 && bare[0].port === DEFAULT_DSH_PORT && bare[0].source.includes('默认值'), JSON.stringify(bare))
 

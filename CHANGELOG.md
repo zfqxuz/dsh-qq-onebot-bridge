@@ -1,5 +1,164 @@
 # 更新日志 / Changelog
 ## v0.7 系列 —— 可迁移 / 配置归用户 / Portable
+### v0.7.3（开发中）— 会话写权冲突：收下、排队、补跑（P0）
+
+背景：宿主 dsh 与容器 harness 共用同一份 DSH home 时，同一条会话的写权（DSH 的跨进程 flock）
+只能被一方持有。旧行为是重试 3×1.5 秒后直接报错，把"去关页面 / 杀进程"甩给用户——真机上
+维护者只能手工杀掉宿主进程才恢复；新用户遇到只会认为插件坏了。
+
+#### 新增
+
+- **写权冲突不再硬失败（P0）**：命中 `SessionAlreadyOwnedError` 时按策略处理，默认
+  `sessionConflictPolicy: wait`——消息**收下并排队**，按 `sessionConflictBackoffSeconds`
+  （默认 5/15/60/300/900 秒）退避重试；拿到锁后在**原会话**里按到达序补跑，绝不 fork
+  （旧版"抢不到就新建"正是上下文被拆散的根因）。
+- 回执：冲突后先沉默 `sessionConflictNoticeSeconds`（默认 8 秒；这期间拿到锁就直接正常回答，
+  不打扰用户），超时未恢复才发一句人话说明，并给出两条出路：切走占用页面，或发 `/new` 立刻另开。
+- 等待上限 `sessionConflictWaitSeconds`（默认 180 = 3 分钟）：`wait` 到点后保留队列并再回执一次；
+  `fork` 到点则另开新会话处理队列，并明确告知"历史没带过来"；`fail` 保留旧行为供调试。
+- 队列上限 `sessionConflictMaxQueued`（默认 5）：超出丢最旧的，并**明确告诉用户丢了**（不静默）。
+- `/new` 结束等待但**不丢消息**：排队内容转入新会话按序补跑。
+- `/health` 与 `/handoff` 增加"冲突排队"一行（条数 / 已等秒数 / 重试次数 / 剩余时间）。
+- 设计全文见 ops 仓库 `docs/SPEC-ownership-and-takeover.md`（本阶段只落地 L0；L1 心跳选主、
+  L3 接管状态机、L3.5 隔离模式、L2/L4 见该规格）。
+#### 新增（P1：托管权心跳与选主）
+
+- **心跳名册**：新增 `lib/harness-heartbeat.js`——每 `harnessHeartbeatSeconds`（默认 5 秒）在
+  `state/harness/<instanceId>.json` 写一条心跳（kind/pid/端口/工作区/版本/时间戳），同时读取名册
+  并按确定规则选主：**kind 优先级 host > desktop > container → startedAt 早者 → instanceId 字典序**；
+  TTL（默认 15 秒）过期即失效，进程崩了不用管。
+- **名册落点按“谁最可能是共享的”排序**：`QQ_HARNESS_STATE_DIR` → `$QQ_DATA_ROOT/state/harness`
+  → `$DSH_HOME/state/harness` → `~/.dsh/state/harness`；插件与 CLI 走同一个函数，
+  不会出现“两边算出不同目录”。
+- **只有真正在服务 QQ 的实例才登记**（`bridge.start({ serving: true })`，由插件入口在 6700
+  绑定成功后传入）：测试里用假 server 调 `start()` 不会往真实名册写东西；同一数据根下反复跑测试
+  也不留垃圾（每次启动另外清理 1 小时前的残留心跳）。
+- **共用一把尺子的 CLI**：`control/bin/qq-harness-owner.mjs`——`--check`（能不能接手，退出码 0/2，
+  给容器 entrypoint 与宿主启动器用）、`--claim`（启动窗口先占位）、`--release`、默认打印名册与当前 owner。
+- **可见性**：`/health` 与 `/handoff` 增加“托管权”一行（谁在托管、名册几个实例、心跳写入是否失败）；
+  运行快照 `qq-runtime.json` 新增 `ownership` 段（控制台直接读）；托管权变化写一条 `stage=ownership` 的 trace。
+
+#### 测试（P1）
+
+- 新增 `test/harness-owner-unit.mjs`（30 条）：TTL/坏文件/空目录、选主三级规则、canTakeOver 组合、
+  CLI 的 `--check` 退出码与 `--claim`/`--release`、插件 start() 写心跳并选主为自己、/health 显示、
+  快照带 ownership、stop() 删心跳。
+
+#### 部署侧（P1）
+
+- **容器 entrypoint**：起 harness 之前先问一句 `qq-harness-owner.mjs --kind container --check`——
+  宿主在托管就**不启动** harness，只保留 napcat/console，并写 `state/harness-standby.json`
+  （谁挡着、什么模式）供控制台显示；之后每 `QQ_TAKEOVER_T1_SECONDS`（默认 90 秒）复查一次，
+  宿主退出后自动接手。`QQ_HARNESS_MODE=container-only` 可显式跳过检查。
+- **compose**：harness 服务新增 `QQ_HARNESS_KIND=container` 与 `QQ_TAKEOVER_T1_SECONDS`。
+- **宿主启动器** `dsh-web-run.mjs`：起 dsh 前用 `--kind host --claim` 在共享名册里占位
+  （避免容器在这个启动窗口抢走 home），退出/被 kill 时 `--release`；找不到 CLI 只记一行、不影响启动。
+- **控制台**：新增「会话所有权」卡片（`control/lib/ownership.mjs` + status-ui）——当前 owner
+  （宿主 / 容器 / 桌面端 + pid/端口/心跳年龄）、名册、容器待机原因、以及"旧版本插件不写名册"的说明。
+
+#### 新增（P2：接管状态机）
+
+- **`control/lib/harness-supervisor.mjs`（纯状态机，可单测）**：`PROBE → STANDBY → CANDIDATE → OWNER →
+  DRAINING → STANDBY`。名册（+外部探测）连续为空满 `QQ_TAKEOVER_T1_SECONDS`（默认 90）才接管；
+  有更高优先级实例回来、且连续确认满 `QQ_TAKEOVER_T2_SECONDS`（默认 30）才交回；
+  交回后 `QQ_MIN_HOLD_SECONDS`（默认 120）内不再抢；一小时内最多切换 `QQ_SWITCHES_PER_HOUR`（默认 3）次，
+  超了停在待机并告警（防抖）。
+- **`control/bin/qq-harness-supervisor.mjs`（外壳）**：每 `QQ_HARNESS_POLL_SECONDS`（默认 5）走一拍，
+  按动作启停子进程；drain = 先 SIGTERM 等在飞回合（上限 `QQ_DRAIN_SECONDS` 默认 60），到点再 SIGKILL；
+  子进程崩溃会重新拉起（5 秒内连续崩就退避到 60 秒一次并记 alert）；
+  写 `state/harness-supervisor.json`（状态/原因/切换次数/探测摘要，控制台读）与
+  `state/harness-standby.json`（待机时，兼容 P1 卡片）。
+- **容器 entrypoint**：`exec` supervisor（不再自己写待机循环）；`QQ_HARNESS_MODE=off` 可退回老行为。
+  compose 补齐 T2 / minHold / 切换上限 / 轮询 / drain 五个参数。
+
+#### 新增（P3：外部探测，找"非参与者"）
+
+- **`control/lib/probe.mjs`**：平台手段——Linux `ss -ltnp`（**没有 owner 信息 = 别的命名空间**）+ `ps`、
+  macOS `lsof` + `ps`、Windows `Get-NetTCPConnection` + `Get-CimInstance Win32_Process`；
+  端口指纹用真机那句匿名 401（`dsh web authentication required`）认出任意端口上的 dsh；
+  POSIX 上再用 `flock -n` 试会话锁当旁证（拿不到 PID 也能判断"有人在写"）；
+  自动排除自己管的端口与子进程，进程/端口两条证据按端口合并（优先留带 pid 的）。
+- supervisor 接管条件因此从"名册空"升级为"名册空 + 探测也找不到"；`strict` 模式下探测不可用就**不接管**。
+
+#### 新增（P4：模型凭据检测与引导）
+
+- **`control/lib/model-credentials.mjs`**：按 DSH 的凭据分层，三处都只看**名字**——
+  `$DSH_HOME/.credentials.yaml` 的 `refs` 键名、进程环境里的 `*_API_KEY`、profile 补丁里的 `provider/model`；
+  配了就列出三处来源（文件路径 + 键名），没配就给一句可执行引导（去宿主 DSH「设置 → 模型」填）。
+  **决策 D5：绝不读值、绝不写盘**（单测里放假 key，断言结论里搜不到）。
+- 控制台「会话所有权」卡片多一行「模型凭据」：已配置 / 未检测到 + 引导（只显示键名）。
+
+#### 测试（P2–P4）
+
+- `test/harness-supervisor-unit.mjs`（15 条）：T1 才接管、T2 才交回、drain 超限强杀、minHold、
+  切换上限告警、container-only 忽略宿主、strict 探测不可用不接管、子进程崩了重拉、参数回落。
+- `test/probe-unit.mjs`（18 条）：五个平台解析器（照真机输出做 fixture）、指纹判定、
+  探测合成（找到宿主 / 不误报自己 / 工具缺失 available=false）、会话锁旁证。
+- `test/model-credentials-unit.mjs`（11 条）：refs 解析边界、环境变量只回名字、profile 提示、
+  三处来源组合、**不泄漏 key 值**、未配置引导、坏文件不抛。
+- `npm run test:ownership` 现在串起六套（conflict / owner / supervisor / probe / console / credentials）。
+
+#### 测试
+
+- 新增 `test/session-conflict-unit.mjs`（17 条）：wait 的收下/回执/夺回/补跑、队列上限与丢弃提示、
+  fork 超时另开、`/new` 转移队列、`fail` 旧行为。
+- `test/static-unit.mjs`：README 惯例断言改为"不写版本流水账 + 标当前版本 + 链 CHANGELOG"；
+  配置键校验改用 `Config.dict`（原来会漏掉没有 default 的键，例如 `identity`），并显式放行两个
+  有意不写进 schema 的本地键（`persona`、`jailedFsPluginFile`）。
+
+### v0.7.2（2026-10-12，开发中）— 宿主端口彻底自描述
+
+背景：桥接插件本身跟 DSH 端口无关（它跑在 dsh 进程里，只自己开 6700 听 OneBot 反连），
+需要知道端口的是**控制台**。容器模式下控制台和宿主是两个容器（独立 PID 命名空间），
+`/proc` 扫描扫不到 dsh 进程，于是只剩环境变量一条路 —— 配置一漂，页面就报"宿主不可用"。
+
+#### 新增
+
+- **候选链多一条"运行中的 harness 容器"**（`control/lib/dsh-port.mjs` 的 `containerDshPort`）：
+  控制台挂着只读 `docker.sock`，直接 `docker inspect <容器> --format '{{range .Config.Env}}…'`
+  读它的 `DSH_PORT` —— 这是容器模式下唯一的"运行事实"。容器名可用 `QQ_HARNESS_CONTAINER` 覆盖
+  （默认 `qqbot-harness`）。**查不到就当没有**：没装 docker、daemon 挂了、容器不存在、
+  inspect 超时或抛错，一律返回 null，宿主模式（非 Docker 部署）完全不受影响。
+- 配套部署侧新增 **`dsh-web-run.mjs`**（dshbot-ops `deploy/qqbot/`）：四种启动方式
+  （容器 entrypoint / systemd / launchd / Windows 计划任务）共用的 dsh 启动器，
+  每次启动把真实地址原子写入 `<数据根>/state/dsh-web-url.txt`（0600）并追加
+  `<数据根>/logs/dsh-web.log`，输出照旧转发、TERM/INT/HUP 转发给子进程。
+  于是候选链里"启动器登记的地址"这条在**容器和宿主两种模式下都是新鲜的**，
+  端口/令牌怎么变都能自发现。
+
+#### 测试
+
+- `test/dsh-port-unit.mjs` 扩到 33 条：新增容器来源（env 文本解析、容器名覆盖、
+  没有 docker/没有容器/没写 DSH_PORT/inspect 抛错四种降级）、候选位置（env → 容器 → … → 默认）
+  与同端口去重；原有顺序断言改为注入空 inspect，保证测试不依赖跑测试的机器上有没有容器。
+- 新增 `test/qr-source-unit.mjs`（13 条）：二维码来源链。
+
+#### 修复
+
+- **公开仓库里的 3 个真实群号已清理**：`LOCAL-PATCH.md` 的 ACL 示例与真机日志片段里带着真实群号，
+  `test/privacy-unit.mjs`（比对本机 profile 里的 10 个私有号）抓到 2 处命中、共 3 个号；
+  现在换成占位号 `10001`（沿用仓库既有的样例约定）。**同时把 `privacy-unit` 挂进 `test:session`**
+  —— 它以前不在套件里，所以"测试全过"从来没覆盖过隐私检查，这也是这次泄露能活到现在的原因。
+- **只填 GitHub token、没配 git 身份时写不进凭据助手**：`.gitconfig` 还不存在时
+  `git config --file <文件>` 会去建锁文件并失败（`could not lock config file … No such file or directory`），
+  于是"有 token 却配不上 helper"。现在写之前先确保父目录与文件存在（`ensureGitConfigFile`）。
+  新用户第一次配 token 就是这个场景，实测踩到。
+- **node 版本门槛纠正为 ≥ 22.13**：权限库静态 `import 'node:sqlite'`，20.x 直接抛错、
+  22.5~22.12 要 `--experimental-sqlite`；此前部署文档/安装器写的是 ≥20，会放行装不起来的机器。
+- **测试套件在 Linux 上首次全绿**：4 条 cmd.exe/PowerShell 垫片检查改为 `checkWin`（非 Windows 明确
+  `SKIP`，不再伪装成"4 条既有失败"）；`system-config-unit` 用 `QQ_GH_BIN` 指向桩文件，不再依赖
+  "gh 恰好在 `/usr/local/bin/gh`"。
+- **发布闸门**：`prepublishOnly` = `npm run verify` = `control-unit` + `privacy-unit`，任一不过不许发。
+- 新增 `PUBLISHING.md`（维护者手册：npm / GitHub / 镜像三处怎么发、发布前检查清单）。
+
+- **没有 Docker 的机器也能扫码了**：控制台的二维码以前只会 `docker cp napcat:…qrcode.png`，
+  于是 NapCat 用官方原生安装器（Windows 一键包 / Linux `napcat.sh` / macOS Mac-Installer）
+  的机器上，页面上永远拿不到二维码——尽管文件就在用户自己机器里。现在 `fetchQrImage` 是
+  **宿主文件优先**：控制台配置的 `napcatQr` → NapCat 启动脚本同级 `cache/qrcode.png`
+  （Windows 一键包布局，`detectPaths` 早已解析）→ 环境变量 `QQ_NAPCAT_QR` →
+  `<数据根>/napcat-cache/qrcode.png` → 最后才是容器 `docker cp`。返回值多一个 `source`
+  说明这次用的是哪条；一条都没有时 `reason` 会列出"找过哪些地方"，不再干说一句失败。
+
 ### v0.7.1（2026-10-12）— 系统配置：gh / git 身份 / DSH 工作区都归控制台
 
 #### 新增

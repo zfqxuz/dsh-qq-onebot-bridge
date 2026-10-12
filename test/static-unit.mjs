@@ -31,7 +31,11 @@ for (const name of files) {
 check('lib/ 全部为合法 UTF-8（无乱码替换字符）', badEncoding.length === 0, badEncoding.join(','))
 
 // ---- 配置键：代码里读的必须在 schema 里 ----
-const schemaKeys = new Set(Object.keys(Config({})))
+// 注意：用 Config.dict（声明的全部键）而不是 Config({})——后者会漏掉没有 default 的键
+// （例如 identity: z.any()），把已声明的键误判成"代码里的野键"。
+const schemaKeys = new Set(Object.keys(Config.dict ?? Config({})))
+// 有意不写进 schema 的本地键（见 README「配置」与 LOCAL-PATCH.md）：persona 注入、jailed fs 插件路径。
+const undeclaredLocalKeys = new Set(['persona', 'jailedFsPluginFile'])
 const skipKeys = new Set(['then', 'constructor', 'name', 'length', 'toString', 'valueOf', 'hasOwnProperty'])
 const readKeys = new Map()   // key -> [file:line]
 for (const name of files) {
@@ -45,7 +49,7 @@ for (const name of files) {
     }
   })
 }
-const unknownKeys = [...readKeys.keys()].filter((key) => !schemaKeys.has(key))
+const unknownKeys = [...readKeys.keys()].filter((key) => !schemaKeys.has(key) && !undeclaredLocalKeys.has(key))
 check('代码读取的配置键都存在', unknownKeys.length === 0, unknownKeys.map((key) => `${key}(${readKeys.get(key)[0]})`).join(', '))
 
 // 反向：schema 里的键必须有人在用（避免“配了不生效”的死开关）
@@ -177,15 +181,14 @@ for (const [name, range] of peerDsh) {
 check('每条声明的运行时线都被 peer 范围覆盖（升线必须同步改表）',
   uncovered.length === 0, uncovered.slice(0, 6).join('; ') || `${peerDsh.length} 个 peer × ${supportedLines.length} 条线`)
 
-// ---- README 惯例：更新日志只展示最近五版 ----
+// ---- README 惯例（2026-10-12 改版）：不写版本流水账（历史交给 CHANGELOG），标出当前版本，两语言一致 ----
 const readme = readFileSync(join(libDir, '..', 'README.md'), 'utf8')
-const versionBullets = [...readme.matchAll(/^- \*\*v([0-9.]+)\*\* —/gm)].map((match) => match[1])
-check('README 更新日志恰好五版（滚动）', versionBullets.length === 5, versionBullets.join(','))
-check('README 首版为当前版本', versionBullets[0] === pkg.version, `${versionBullets[0]} vs ${pkg.version}`)
 const readmeEn = readFileSync(join(libDir, '..', 'README.en.md'), 'utf8')
-const versionBulletsEn = [...readmeEn.matchAll(/^- \*\*v([0-9.]+)\*\* —/gm)].map((match) => match[1])
-check('README.en 更新日志恰好五版', versionBulletsEn.length === 5, versionBulletsEn.join(','))
-check('英文 README 首版同版本', versionBulletsEn[0] === pkg.version, versionBulletsEn[0])
+const historyBullets = (text) => [...text.matchAll(/^- \*\*v([0-9.]+)\*\* —/gm)].map((match) => match[1])
+check('README 不写版本流水账（历史交给 CHANGELOG）', historyBullets(readme).length === 0, historyBullets(readme).join(','))
+check('README 标出当前版本且与 package.json 一致', readme.includes(`v${pkg.version}`), `expect v${pkg.version}`)
+check('README 链到 CHANGELOG.md', readme.includes('](CHANGELOG.md)'), '')
+check('README.en 同样不写流水账并链到 CHANGELOG.md', historyBullets(readmeEn).length === 0 && readmeEn.includes('](CHANGELOG.md)'), '')
 
 // ---- v0.5.9：OPS_ARG_WORDS（识别"命令粘住参数"用的词表）必须与命令正则同步 ----
 // 为什么：这张表决定"`/设管理123` 该不该回用法提示"，漏一个词就意味着那个命令

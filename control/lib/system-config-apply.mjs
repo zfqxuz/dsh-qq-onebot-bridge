@@ -110,7 +110,23 @@ function readGitIdentity(file) {
   return { name, email, exists: true }
 }
 
+/**
+ * 确保 .gitconfig 的父目录与文件存在。
+ *
+ * [fix 2026-10-12] 只填了 GitHub token、没配 git 身份时 .gitconfig 还不存在，
+ * 而 `git config --file <不存在的文件>` 要建锁文件（<file>.lock）会失败：
+ *   error: could not lock config file …/.gitconfig: No such file or directory
+ * 结果"有 token 却写不进凭据助手"—— 新用户第一次配 token 正是这个场景（实测踩到）。
+ */
+function ensureGitConfigFile(file) {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    if (!existsSync(file)) writeFileSync(file, '', { mode: 0o644 })
+  } catch { /* 建不了就让下面的 git 命令去报错，报告里会带上原因 */ }
+}
+
 function gitConfigSet(file, key, value) {
+  ensureGitConfigFile(file)
   execFileSync('git', ['config', '--file', file, key, value], { stdio: 'pipe', timeout: 8000 })
 }
 
