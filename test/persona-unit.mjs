@@ -86,7 +86,7 @@ function makeConfig(persona) {
   return Config({
     cwd: stateDir,
     allowUsers: [1001, 1002],
-    allowGroups: [134993546],
+    allowGroups: [10001],
     acceptPrivate: true,
     botQq: 999,
     adminEnabled: false,
@@ -157,7 +157,7 @@ const CHAT_OVERRIDE = '本群专属人设：这个群只许玩梗，不许报技
     owner: CONFIG_OWNER,
     guest: CONFIG_GUEST,
     extra: '配置版公共追加（应当被 extra.md 覆盖）',
-    chats: { 'g:134993546': CHAT_OVERRIDE },
+    chats: { 'g:10001': CHAT_OVERRIDE },
   })
   const server = new MockServer()
   const { ctx, built } = makeCtx()
@@ -179,7 +179,7 @@ const CHAT_OVERRIDE = '本群专属人设：这个群只许玩梗，不许报技
   check('guest 人设：文件覆盖配置', personaText(guest).startsWith(FILE_GUEST), personaText(guest).slice(0, 40))
   check('guest 人设带 extra', personaText(guest).includes(FILE_EXTRA))
 
-  await send(bridge, server, { text: '@机器人 在吗', userId: 1002, messageType: 'group', groupId: 134993546, atMe: true })
+  await send(bridge, server, { text: '@机器人 在吗', userId: 1002, messageType: 'group', groupId: 10001, atMe: true })
   const group = built[built.length - 1]
   check('群会话用的是 guest preset（cwd 为访客目录）', group?.meta?.cwd === guestDir, `cwd=${group?.meta?.cwd}`)
   check('群会话注册了 qq-persona 段', !!personaSection(group))
@@ -193,7 +193,7 @@ const CHAT_OVERRIDE = '本群专属人设：这个群只许玩梗，不许报技
   writeFileSync(join(personaDir, 'guest.md'), FILE_GUEST, 'utf8')
 
   // ===== 3. 按会话文件优先于按会话配置 =====
-  writeFileSync(join(personaDir, 'chat-g_134993546.md'), '本群专属文件人设。', 'utf8')
+  writeFileSync(join(personaDir, 'chat-g_10001.md'), '本群专属文件人设。', 'utf8')
   check('按会话文件优先于按会话配置', personaText(group).startsWith('本群专属文件人设。'), personaText(group).slice(0, 30))
 
   bridge.stop()
