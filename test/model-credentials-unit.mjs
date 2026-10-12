@@ -18,7 +18,8 @@ function check(name, ok, extra = '') {
 }
 
 const root = mkdtempSync(join(tmpdir(), 'qq-model-credentials-'))
-const FAKE_KEY = 'sk-fixture-never-leak-0001'
+// 短假值：够用来断言"结论里搜不到 key 值"，又不会撞上隐私套件的 `sk-…≥20 字符` 形态检查。
+const FAKE_KEY = 'sk-fake-0001'
 
 // 1) refs 解析：只取 refs 段下的键名，records 段不误取
 const YAML = [

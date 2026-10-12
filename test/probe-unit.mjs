@@ -39,7 +39,7 @@ const PS = [
   '  902 nginx: worker process',
 ].join('\n')
 const CIM_JSON = JSON.stringify([
-  { ProcessId: 1234, CommandLine: '"C:\\Users\\u\\AppData\\Local\\Programs\\DSH Desktop\\DeepSeek Harness.exe"' },
+  { ProcessId: 1234, CommandLine: '"C:\\Users\\user\\AppData\\Local\\Programs\\DSH Desktop\\DeepSeek Harness.exe"' },
   { ProcessId: 99, CommandLine: 'node C:\\npm\\dsh web --no-open --port 3082' },
   { ProcessId: 77, CommandLine: 'node C:\\app\\qq-harness-supervisor.mjs --kind container' },
 ])

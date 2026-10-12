@@ -50,6 +50,7 @@ node_modules
 *.swo
 *~
 
-# Windows 风格的"不可写路径"兜底：测试用 `Z:\nope\qq-history` 造失败场景时，
+# Windows 风格的"不可写路径"兜底：测试用 Z 盘下的假目录（如 Z 盘根 + qq-history）造失败场景时，
 # 在 POSIX 上整串会变成**一个**目录名（含反斜杠），上面的 `qq-history/` 匹配不到 ⇒ 单独兜。
+# 这里刻意不写出那条完整路径：privacy-unit 会拿 existsSync 把"本机真实存在的路径"判成泄露。
 Z:*
