@@ -57,6 +57,10 @@ class MockServer extends EventEmitter {
   getEssenceMsgList() { return Promise.resolve([{ message: { text: '精华' }, message_id: 5 }]) }
   getMsg() { return Promise.resolve({ message: [{ type: 'text', data: { text: '被引用的文字' } }] }) }
   getGroupMemberList() { return Promise.resolve([{ user_id: 1002, nickname: '小明' }]) }
+  getGroupFileUrl(_socket, groupId, fileId, busid) {
+    this.calls.push({ action: 'get_group_file_url', groupId, fileId, busid })
+    return Promise.resolve({ url: `https://file.example/${fileId}` })
+  }
   currentSocket() { return this.socket }
 }
 
@@ -72,6 +76,9 @@ const config = Config({
   allowGroups: [2002],
   botQq: 999,
   adminUsers: [1001],
+  // 2026-10-12：qq_send_file 改成按 qq.write.file 判权（仅 admin 角色），这条用例要测工具实现本身，
+  // 就把用例所在的群升级成 owner（等价于真机上"整群 owner"的那种配置）。
+  identity: { enabled: true, groupRoles: { 2002: 'owner' }, defaultRole: 'guest' },
   memoryEnabled: true,
   memoryMaxEntries: 10,
   reminderEnabled: true,
@@ -340,6 +347,46 @@ async function boot({ resumeMode = 'fail' } = {}) {
   const approved = await send('/同意 1')
   check('/同意 审批通过', approved.includes('已批准') && server.calls.some((call) => call.action === 'groupRequest'), approved.trim())
   bridge.stop()
+}
+
+// ===== 收群文件（2026-10-12 新增：默认开）=====
+{
+  const h = await boot()
+  const { send, server, bridge, sessions } = h
+  const realFetch = globalThis.fetch
+  let fetchedUrl = ''
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).startsWith('https://file.example/')) {
+      fetchedUrl = String(url)
+      const body = new TextEncoder().encode('第一行日志\n第二行日志').buffer
+      return { ok: true, status: 200, arrayBuffer: async () => body }
+    }
+    return realFetch(url, opts)
+  }
+  try {
+    await send('', { files: [{ name: 'note.txt', fileId: 'fid-1', busid: 0, size: 24, url: '' }] }, 900)
+    const session = [...sessions.values()].at(-1)
+    const prompt = (session?.followups ?? []).join('\n')
+    check('群文件：用 file_id 换到了下载地址', server.calls.some((call) => call.action === 'get_group_file_url' && call.fileId === 'fid-1'), JSON.stringify(server.calls.filter((c) => c.action === 'get_group_file_url')))
+    check('群文件：真的下载了（拿到临时地址）', fetchedUrl !== '', fetchedUrl)
+    const saved = join(baseDir, 'qq-files', 'note.txt')
+    check('群文件：落盘到 qq-files/', existsSync(saved), saved)
+    check('群文件：prompt 里有路径与内容预览', prompt.includes('qq-files') && prompt.includes('第一行日志'), prompt.slice(0, 120).replace(/\n/g, ' | '))
+    // 大小超限：不下载、只回一句（不给模型塞假路径）
+    fetchedUrl = ''
+    server.calls.length = 0
+    await send('', { files: [{ name: 'huge.bin', fileId: 'fid-2', busid: 0, size: 999 * 1024 * 1024, url: '' }] }, 700)
+    const prompts2 = [...sessions.values()].at(-1)?.followups ?? []
+    const prompt2 = prompts2.slice(-1)[0] ?? ''
+    check('群文件：超过上限不下载（也不换地址）', fetchedUrl === '' && !server.calls.some((call) => call.action === 'get_group_file_url'), fetchedUrl)
+    check('群文件：超限时如实说明', prompt2.includes('没有下载') || prompt2.includes('超过上限'), prompt2.slice(0, 100).replace(/\n/g, ' | '))
+    // 收文件不按身份卡：访客（非管理员）发来的文件同样收下
+    await send('', { userId: 1002, senderName: '访客', files: [{ name: 'guest.txt', fileId: 'fid-3', busid: 0, size: 10, url: '' }] }, 700)
+    check('群文件：访客发的也收（收文件默认拥有）', existsSync(join(baseDir, 'qq-files', 'guest.txt')), join(baseDir, 'qq-files', 'guest.txt'))
+  } finally {
+    globalThis.fetch = realFetch
+    bridge.stop()
+  }
 }
 
 // ===== 每会话工具执行 =====

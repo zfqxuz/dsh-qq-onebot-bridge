@@ -226,6 +226,15 @@ await send(b.server, '你好', { userId: ADMIN })
 const adminSession = b.built[b.built.length - 1]
 check('超管会话挂完整 preset', adminSession.meta.agentPreset === 'qq-coding', String(adminSession.meta.agentPreset))
 check('超管会话不做裁剪（全都要，不能因为漏列就丢掉宿主工具）', adminSession.restrict.length === 0, JSON.stringify(adminSession.restrict))
+// 发文件（qq_send_file）：2026-10-12 起从 tool.chat.media 拆出来，按 qq.write.file 判 —— 只有 admin 角色有
+{
+  const legacySurface = resolveToolSurface(buildPolicyFromConfig({ adminUsers: [ADMIN] }), `group:${GROUP}`)
+  check('legacy（identity 关掉的兜底角色）也拿不到发文件', legacySurface.decisions['qq.write.file'].allowed === false, JSON.stringify(legacySurface.decisions['qq.write.file']))
+  check('guest 拿不到发文件', guestSurface.decisions['qq.write.file'].allowed === false)
+  check('admin 拿得到发文件', adminSurface.decisions['qq.write.file'].allowed === true)
+  check('发文件权限通过后 qq_send_file 才进工具面', adminSurface.allowedScopedTools.includes('qq_send_file') && !guestSurface.allowedScopedTools.includes('qq_send_file'), '')
+}
+
 check('超管会话注册了发图/发文件工具', adminSession.tools.includes('qq_send_image') && adminSession.tools.includes('qq_send_file'), adminSession.tools.join(','))
 
 // ===== 3. guard：可见 ≠ 可执行（真机上 restrict 会整段失效，靠它兜底） =====

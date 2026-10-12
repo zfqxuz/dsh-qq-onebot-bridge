@@ -25,5 +25,13 @@ check('string text stripped', r2.text === '分析一下', r2.text)
 const r3 = parseMessage('普通消息', 0)
 check('no reply', r3.reply === null, JSON.stringify(r3.reply))
 
+
+// 文件段（2026-10-12 收群文件用）：群文件通常只给 file_id，必须把 file_id/busid/size 带出来
+const r4 = parseMessage([{ type: 'file', data: { name: 'a.txt', file_id: 'fid-9', busid: 102, size: 1234 } }], 0)
+check('file 段：name/url', r4.files.length === 1 && r4.files[0].name === 'a.txt', JSON.stringify(r4.files))
+check('file 段：file_id/busid/size', r4.files[0].fileId === 'fid-9' && r4.files[0].busid === 102 && r4.files[0].size === 1234, JSON.stringify(r4.files[0]))
+const r5 = parseMessage('[CQ:file,name=b.zip,file_id=fid-7,busid=15,size=88]', 0)
+check('CQ 字符串形式的文件段也能解析', r5.files.length === 1 && r5.files[0].fileId === 'fid-7' && r5.files[0].busid === 15, JSON.stringify(r5.files))
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

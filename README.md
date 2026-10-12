@@ -26,6 +26,10 @@ DSH 是本地 agent 运行时，不认识 QQ；NapCat 这类 OneBot 实现能把
 - 语音转文字：群里 @机器人 引用一条语音、或私聊直接发语音（默认用 DSH 自带的本地识别，音频不出本机）；语音回复与朗读需自备 TTS（本地 GPT-SoVITS 或云端密钥）。
 - 看图走识图工具（`visionMode` 可选 `tool` 或原生多模态 `native`）；生图用 `/画 <描述词>`（需自备 OpenAI 兼容接口或本地 SD WebUI）。
 
+**收文件与发文件**
+- **收文件默认开**：群里 @机器人 发的文件、私聊直接发的文件都会存到 `qq-files/`，把路径交给模型；小的文本文件（txt/md/json/csv/log/代码）再附 4KB 内容预览，只读访客也看得到。超 `fileTransferMaxBytes`（默认 50 MiB）只回一句不落盘。
+- **发文件只给管理员**：`qq_send_file` 按 `qq.write.file` 判权，只有 admin 角色（主人的号 / `adminUsers` 白名单 / 整群升级为 owner 的会话）拿得到；普通群友连这个工具都不会注册。
+
 **群运营、玩法与自动化**（成组开关，默认关，用到再开）
 - 群管：`/mute` `/unmute` `/kick`（二次确认）`/clear` `/公告` `/精华` `/名片` `/头衔` `/设管理` `/撤管理` `/邀请策略` `/加群方式` `/退群`。
 - 运营：`/群打卡`（QQ 原生群签到）、`/全体余量`、`/禁言名单`、`/批量踢`、`/待办`、`/移动文件`、`/传图`、`/群名`、`/周报` 等。玩法与自动化：签到、积分、运势/抽签/塔罗、骰子、成语接龙、猜数字、投票、群待办、活跃榜、表情回应榜、点赞、戳一戳；定时提醒（含"每天/每周/每个工作日"重复）、定时播报（RSS/天气/MC）、入站 webhook、入群审批、每日日报、掉线自愈。
@@ -151,6 +155,7 @@ dsh plugin --profile web remove @zfqxuz/dsh-qq-onebot-bridge   # 卸载
 | `injectEnabled` / `injectDryRun` / `sttEnabled` / `sttProvider` | boolean / boolean / boolean / enum | `false` / `true` / `false` / `dsh` | 事件注入通道与其 dry-run；**dry-run 保持打开**；语音转文字；`dsh` = 宿主本地识别（不出本机），`cloud` = 走 `sttBaseUrl`+`sttApiKey` |
 | `ttsEnabled` / `ttsProvider` / `imageGenEnabled` / `imageGenProvider` | boolean / enum / boolean / enum | `false` / `azure` / `false` / `openai` | 语音回复（**需自备 TTS**）；`local` = 本地 GPT-SoVITS；生图（**需自备后端**）；命令见 `imageGenCommand`（默认 `/画`） |
 | `privateImageView` / `groupImageView` / `visionMode` / `memberQueryEnabled` / `groupFileEnabled` / `groupFileDownloadEnabled` | boolean / boolean / enum / boolean / boolean / boolean | `true` / `true` / `tool` / `true` / `true` / `true` | 下载对方发来的图片交给识图工具（存 `qq-images/`）；`native` = 多模态附件直传；`/成员` 与 `qq_member_info`；`/文件` 列表；`/取` 下载（只发私聊）。同类只读项：`albumEnabled`、`ocrEnabled` |
+| `fileTransferEnabled` / `fileTransferMaxBytes` | boolean / number | `true` / `52428800` | **收文件默认开**：私聊总是收、群聊被 @ 到时收，存 `qq-files/` 并把路径（小文本文件再附 4KB 预览）交给模型；**发文件（`qq_send_file`）仅管理员**——它按 `qq.write.file` 判权，连 `legacy` 角色也不给 |
 | `historyArchiveEnabled` / `historyArchiveKeepDays` / `historySearchEnabled` / `historySearchDays` / `forwardExpandEnabled` | boolean / number / boolean / number / boolean | `true` / `90` / `true` / `7` / `true` | 消息按天归档到 `qq-history/`；过期移入回收站，不物理删除；`/找` 与 `qq_search_history`（默认扫描天数）；展开合并转发（`forwardMaxNodes` 50 / `forwardMaxChars` 4000） |
 | `imageRetentionDays` / `imageTrashEnabled` | number / boolean | `14` / `true` | 媒体保留天数；过期**只回收不销毁**（移入 `qq-trash/<日期>/`） |
 | `ffmpegPath` | string | `ffmpeg` | 语音转 WAV、GIF 取首帧、大图压缩、本地 TTS 转 mp3 用 |
