@@ -1,6 +1,31 @@
 # 更新日志 / Changelog
 ## v0.7 系列 —— 可迁移 / 配置归用户 / Portable
-### v0.7.3（开发中）— 会话写权冲突：收下、排队、补跑（P0）
+### v0.7.4（2026-10-12）— 修：接管外壳把自己起的 harness 当成竞争者（30 秒一轮自杀循环）
+
+背景：v0.7.3 首发的容器镜像里，supervisor 判定"谁在托管"用的是"名册里 kind 优先级 ≥ 自己的都算竞争者"。
+容器里的 harness 一启动，插件就开始写心跳（kind=container），于是 supervisor 把自己的子进程读成了
+"另一个实例回来了"，T2（默认 30 秒）到点就给它发 SIGTERM 交回；交回后名册又空了，T1 到点再拉起——
+表现为容器版 QQ 机器人每两分钟断一次。真机复现（起真实子进程）见 test/harness-supervisor-child-unit.mjs。
+
+#### 修复
+
+- **supervisor 认出"自己人"**：起 harness 时通过 `QQ_HARNESS_OWNED_BY=<supervisor 实例 id>` 传给子进程，
+  插件把它写进心跳的 `ownedBy` 字段；tick 时把带这个值的心跳从竞争者里摘掉。
+- **同级实例按"谁先到"决胜**（与 `electOwner` 同一套规则：优先级 → startedAt → instanceId）。
+  旧口径下两个容器会互相把对方当竞争者、双双待机（谁也不服务）；现在晚到的那个让位。
+  不传 `self` 时仍走旧口径，老调用方与既有单测不受影响。
+- **宿主启动器不在容器里登记"宿主"心跳**：`dsh-web-run.mjs` 在 `QQ_HARNESS_KIND=container`
+  或被 supervisor 拉起（`QQ_HARNESS_OWNED_BY` 有值）时跳过 claim/release——否则那条 kind=host 心跳
+  同样会被容器里的 supervisor 当成"宿主回来了"。
+- **`QQ_HARNESS_MODE` 真正透传进容器**：文档承诺的逃生开关（`off` = 跳过 supervisor，按老行为直接起）
+  之前 compose 没接线；现在接上，并在 `.env.example` 补了「6.5) 会话托管权」一节
+  （auto / container-only / off 的差别、T1 / T2 / minHold / 切换上限）。
+- 测试：新增 `test/harness-supervisor-child-unit.mjs`（5 条，起真实子进程锁住这个缺陷）；
+  状态机加"自己人 / 更早的同级实例 / 宿主仍压过容器"3 组断言，心跳单测加 `ownedBy` 断言。
+
+> v0.7.3 的内容（P0–P4）见下一节；**用过 v0.7.3 镜像的容器部署请升级到 v0.7.4**。
+
+### v0.7.3（2026-10-12）— 会话写权冲突：收下、排队、补跑（P0）
 
 背景：宿主 dsh 与容器 harness 共用同一份 DSH home 时，同一条会话的写权（DSH 的跨进程 flock）
 只能被一方持有。旧行为是重试 3×1.5 秒后直接报错，把"去关页面 / 杀进程"甩给用户——真机上

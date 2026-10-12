@@ -167,6 +167,11 @@ check('插件：stop() 删掉自己的心跳', afterStop.length === 0, afterStop
 
 check('detectKind：env 显式指定优先', detectKind({ env: { QQ_HARNESS_KIND: 'desktop' }, exists: () => false }) === 'desktop')
 check('detectKind：容器标记可识别', detectKind({ env: {}, exists: (p) => p === '/.dockerenv', platform: 'linux' }) === 'container')
+check('心跳记录带 ownedBy（supervisor 据此认出"自己起的 harness"）', (() => {
+  const rec = buildHeartbeat({ instanceId: 'bridge-container-x', kind: 'container', startedAt: now, now, ownedBy: 'supervisor-abc' })
+  const plain = buildHeartbeat({ instanceId: 'bridge-container-y', kind: 'container', startedAt: now, now })
+  return rec.ownedBy === 'supervisor-abc' && plain.ownedBy === ''
+})(), '')
 check('harnessStateDir：env 覆盖优先', harnessStateDir({ env: { QQ_HARNESS_STATE_DIR: '/tmp/x' } }) === '/tmp/x')
 check('harnessStateDir：默认落 DSH_HOME/state/harness', harnessStateDir({ env: { DSH_HOME: '/data/dsh' } }) === join('/data/dsh', 'state', 'harness'))
 

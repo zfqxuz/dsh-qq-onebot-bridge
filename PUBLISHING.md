@@ -55,7 +55,7 @@ dsh plugin --profile web install @zfqxuz/dsh-qq-onebot-bridge   # 装到 DSH 的
 
 ```bash
 cd ~/dev/dshbot-ops/deploy/qqbot
-# 1) .env 里改 QQ_TAG=v0.7.3（别覆盖已发布的 tag）
+# 1) .env 里改 QQ_TAG=v0.7.4（别覆盖已发布的 tag）
 # 2) 多架构构建并推送
 bash build.sh --multiarch
 # 3) 本地验证后再改文档里的 tag

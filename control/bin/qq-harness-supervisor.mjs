@@ -38,6 +38,13 @@ const standbyFile = join(stateDir, 'harness-standby.json')
 const registryDir = argOf('registry-dir', harnessStateDir())
 const noProbe = has('no-probe')
 
+// 本 supervisor 的身份：起 harness 时通过 QQ_HARNESS_OWNED_BY 传给子进程，
+// 子进程里的插件把它写进心跳 —— tick 时据此把"我起的 harness"从竞争者里摘掉。
+// （2026-10-12 实跑复现：不带这个字段时，自己的 harness 写心跳满 T2 后会被自己 drain，30 秒一轮自杀循环。）
+const supervisorId = argOf('instance', String(process.env.QQ_HARNESS_SUPERVISOR_ID ?? '').trim())
+  || `supervisor-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
+const supervisorStartedAt = Date.now()
+
 const log = (line) => console.log(`[supervisor] ${line}`)
 
 /** 外部探测（P3 落地后自动启用；没有该模块就当"探测不可用"）。 */
@@ -86,7 +93,7 @@ function spawnChild() {
   lastSpawnAt = now
   const cmd = command.length > 0 ? command : ['dsh', 'web', '--no-open', '--port', String(env.DSH_PORT || 3081)]
   log(`启动 harness：${cmd.map((part) => (part.includes(' ') ? JSON.stringify(part) : part)).join(' ') }`)
-  child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env })
+  child = spawn(cmd[0], cmd.slice(1), { stdio: 'inherit', env: { ...env, QQ_HARNESS_OWNED_BY: supervisorId } })
   child.on('exit', (code, signal) => {
     log(`harness 退出（code=${code ?? '-'} signal=${signal ?? '-'}）`)
     child = null
@@ -104,7 +111,9 @@ async function drainChild(force = false) {
 
 async function tick() {
   const now = Date.now()
-  const { fresh } = readHeartbeats(registryDir, { ttlSeconds: Math.max(15, params.pollSeconds * 3) })
+  const { fresh: freshAll } = readHeartbeats(registryDir, { ttlSeconds: Math.max(15, params.pollSeconds * 3) })
+  // 自己起的 harness 不算竞争者（它和自己同级；少了这一条会自杀，见 supervisorId）
+  const fresh = freshAll.filter((item) => String(item.ownedBy ?? '') !== supervisorId)
   let probe = { available: false, foreign: [], reason: '探测未启用' }
   if (probeFn !== null) {
     try {
@@ -122,7 +131,11 @@ async function tick() {
     ...fresh,
     ...(probe.foreign ?? []).map((item) => ({ instanceId: item.id ?? item.pid ?? 'foreign', kind: item.kind ?? 'host', pid: item.pid ?? 0, ...item })),
   ]
-  const result = stepSupervisor(state, { roster, probe, childRunning: child !== null }, { now, params })
+  const result = stepSupervisor(
+    state,
+    { roster, probe, childRunning: child !== null, self: { instanceId: supervisorId, kind: params.kind, startedAt: supervisorStartedAt } },
+    { now, params },
+  )
 
   for (const action of result.actions) {
     if (action === 'spawn') spawnChild()
@@ -132,6 +145,8 @@ async function tick() {
 
   writeJson(supervisorFile, {
     at: now, state: result.state, reason: result.reason, since: state.since, kind: state.kind, mode: state.mode,
+    instanceId: supervisorId,
+    startedAt: supervisorStartedAt,
     childPid: child === null ? 0 : child.pid ?? 0,
     switches: state.switches.length, alerts: state.alerts,
     params: { t1Seconds: params.t1Seconds, t2Seconds: params.t2Seconds, minHoldSeconds: params.minHoldSeconds, drainSeconds: params.drainSeconds },
@@ -155,7 +170,7 @@ async function tick() {
 }
 
 async function main() {
-  log(`启动：kind=${params.kind} mode=${params.mode} T1=${params.t1Seconds}s T2=${params.t2Seconds}s minHold=${params.minHoldSeconds}s 探测=${probeFn === null ? '关' : '开'}`)
+  log(`启动：身份=${supervisorId} kind=${params.kind} mode=${params.mode} T1=${params.t1Seconds}s T2=${params.t2Seconds}s minHold=${params.minHoldSeconds}s 探测=${probeFn === null ? '关' : '开'}`)
   await tick()
   const timer = setInterval(() => { void tick().catch((error) => log(`tick 异常：${error.message}`)) }, Math.max(1, params.pollSeconds) * 1000)
   for (const sig of ['SIGTERM', 'SIGINT']) {

@@ -105,6 +105,31 @@ const drive = (state, seconds, input = {}, params = P) => stepSupervisor(state, 
   check('子进程不在 → 重新 spawn', r.actions.includes('spawn'), JSON.stringify(r.actions))
 }
 
+// 10) 同级实例的决胜（self）：自己起的 harness 不算竞争者，别人先到才让位
+//     —— 旧口径"kind 优先级 >= 自己都算"会把 supervisor 自己起的 harness 当成宿主回来，
+//        T2 之后自杀（2026-10-12 实跑复现：30 秒一轮），这里锁住修复。
+{
+  const self = { instanceId: 'supervisor-mine', kind: 'container', startedAt: T0 }
+  const mine = { ...buildHeartbeat({ instanceId: 'bridge-container-mine', kind: 'container', pid: 99, port: 6700, startedAt: T0 + 1_000, now: T0 }), ownedBy: 'supervisor-mine' }
+  const older = buildHeartbeat({ instanceId: 'bridge-container-older', kind: 'container', pid: 98, port: 6700, startedAt: T0 - 60_000, now: T0 })
+  const st = createSupervisorState({ params: P, now: T0, kind: 'container' })
+  drive(st, 0, { roster: [], self }); drive(st, 10, { roster: [], self })
+  let r = drive(st, 12, { roster: [mine], self, childRunning: true }, P)
+  check('自己起的 harness（startedAt 更晚）不算竞争者', r.state === 'owner' && !r.actions.includes('drain'), `${r.state} ${r.reason}`)
+  r = drive(st, 12 + P.t2Seconds + 10, { roster: [mine], self, childRunning: true }, P)
+  check('自己的 harness 写心跳再久也不会被 drain（不再自杀）', r.state === 'owner' && !r.actions.includes('drain'), `${r.state} ${r.reason}`)
+
+  const st2 = createSupervisorState({ params: P, now: T0, kind: 'container' })
+  drive(st2, 0, { roster: [], self }); drive(st2, 10, { roster: [], self })
+  r = drive(st2, 12, { roster: [older], self, childRunning: true }, P)
+  check('更早的同级实例出现：先让位（等 T2）', r.state === 'owner' && !r.actions.includes('drain'), `${r.state} ${r.reason}`)
+  r = drive(st2, 12 + P.t2Seconds + 1, { roster: [older], self, childRunning: true }, P)
+  check('更早的同级实例满 T2 → drain（两个容器不会双双待机）', r.state === 'draining' && r.actions.includes('drain'), `${r.state} ${JSON.stringify(r.actions)}`)
+
+  r = drive(st2, 12 + P.t2Seconds + 2, { roster: [host()], self, childRunning: true }, P)
+  check('宿主（kind 更高）仍然压过容器', r.state === 'draining', `${r.state} ${r.reason}`)
+}
+
 // 9) 参数从 env 读，非法值回落默认
 {
   const p = paramsFromEnv({ QQ_TAKEOVER_T1_SECONDS: '3', QQ_TAKEOVER_T2_SECONDS: 'x', QQ_HARNESS_MODE: 'strict', QQ_HARNESS_KIND: 'container' })

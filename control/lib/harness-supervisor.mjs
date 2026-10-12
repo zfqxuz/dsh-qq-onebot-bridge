@@ -42,6 +42,24 @@ export function paramsFromEnv(env = process.env) {
   }
 }
 
+/**
+ * 谁更有资格持有（与 harness-heartbeat 的 electOwner 同一套规则）：
+ * 优先级高者胜 → startedAt 早者胜 → instanceId 字典序小者胜。
+ *
+ * 为什么需要它：旧口径是"名册里 kind 优先级 >= 自己的都算竞争者"，
+ * 于是 ①supervisor 会把自己起的 harness（kind 相同、startedAt 更晚）当成"宿主回来了"，
+ * T2 之后自杀；②两个容器互相都把对方当竞争者 → 双双待机、谁也不服务（2026-10-12 复现）。
+ */
+export function outranks(candidate, self) {
+  const ca = KIND_PRIORITY[candidate?.kind] ?? 0
+  const cb = KIND_PRIORITY[self?.kind] ?? 0
+  if (ca !== cb) return ca > cb
+  const sa = Number(candidate?.startedAt) || 0
+  const sb = Number(self?.startedAt) || 0
+  if (sa !== sb) return sa < sb
+  return String(candidate?.instanceId ?? '') < String(self?.instanceId ?? '')
+}
+
 export function createSupervisorState({ params = DEFAULT_PARAMS, now = Date.now(), kind = params.kind ?? 'container', mode = params.mode ?? 'auto' } = {}) {
   return {
     state: 'probe',
@@ -65,7 +83,7 @@ function pruneSwitches(state, now) {
 /**
  * 走一拍。
  * @param {object} state createSupervisorState() 的结果（会被就地更新）
- * @param {{ roster?: object[], probe?: { available?: boolean, foreign?: object[] }, childRunning?: boolean }} input
+ * @param {{ roster?: object[], probe?: { available?: boolean, foreign?: object[] }, childRunning?: boolean, self?: { instanceId?: string, kind?: string, startedAt?: number } }} input
  * @param {{ now?: number, params?: object }} [options]
  * @returns {{ state: string, actions: string[], reason: string }}
  */
@@ -75,7 +93,11 @@ export function stepSupervisor(state, input = {}, { now = Date.now(), params = D
   const probe = input.probe ?? {}
   const childRunning = input.childRunning === true
   const want = KIND_PRIORITY[state.kind] ?? 0
-  const others = roster.filter((item) => (KIND_PRIORITY[item.kind] ?? 0) >= want)
+  // self 缺席时退回旧口径（kind 优先级 >= 自己），保持既有调用方/单测兼容
+  const self = input.self ?? null
+  const others = self === null
+    ? roster.filter((item) => (KIND_PRIORITY[item.kind] ?? 0) >= want)
+    : roster.filter((item) => outranks(item, self))
   // container-only：假装名册里没有更高优先级实例（宿主心跳不该参与任何计时）
   const ignoreHost = state.mode === 'container-only'
   const blocker = ignoreHost === true ? null : (others.length > 0 ? others[0] : null)

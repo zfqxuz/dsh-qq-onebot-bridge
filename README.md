@@ -7,7 +7,7 @@
 [![dsh](https://img.shields.io/badge/dsh-0.1%20%7C%200.2-6f42c1.svg)](package.json)
 [![onebot](https://img.shields.io/badge/OneBot-v11-black.svg)](https://github.com/botuniverse/onebot-11)
 
-[English](README.en.md) · [更新日志](CHANGELOG.md) · [本地改动与已知补丁](LOCAL-PATCH.md) · 当前版本 v0.7.3
+[English](README.en.md) · [更新日志](CHANGELOG.md) · [本地改动与已知补丁](LOCAL-PATCH.md) · 当前版本 v0.7.4
 
 ## 它解决什么问题
 
@@ -255,6 +255,6 @@ node test/replay-live-host.mjs --token <控制台 token>   # 录制 → 离线�
 
 ## 相关链接
 
-- [CHANGELOG.md](CHANGELOG.md) — 逐版本记录与缺陷清单（当前 v0.7.3）；[LOCAL-PATCH.md](LOCAL-PATCH.md) — 本地改动、人设 / 身份 / 工作区说明
+- [CHANGELOG.md](CHANGELOG.md) — 逐版本记录与缺陷清单（当前 v0.7.4）；[LOCAL-PATCH.md](LOCAL-PATCH.md) — 本地改动、人设 / 身份 / 工作区说明
 - [examples/cordis.patch.example.yml](examples/cordis.patch.example.yml) — 完整配置示例
 - [NapCat 文档](https://doc.napneko.icu/) · [OneBot v11 规范](https://github.com/botuniverse/onebot-11); 部署包 [zfqxuz/qqbot-deploy](https://github.com/zfqxuz/qqbot-deploy)（Docker / 宿主一行装；含 `HOST-INSTALL.md`、`UPDATE-UNINSTALL.md`）

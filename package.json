@@ -1,6 +1,6 @@
 {
   "name": "@zfqxuz/dsh-qq-onebot-bridge",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "QQ ↔ DeepSeek Harness agent bridge over OneBot v11 (reverse WebSocket)：把 QQ 群/私聊接到 DSH agent，自带权限（RBAC）、可视化控制台与可回放调试",
   "type": "module",
   "main": "lib/index.js",
@@ -18,7 +18,7 @@
   "scripts": {
     "control": "node control/bin/qq-control.mjs",
     "test": "node test/control-unit.mjs",
-    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/session-conflict-unit.mjs && node test/harness-owner-unit.mjs && node test/ownership-console-unit.mjs && node test/model-credentials-unit.mjs && node test/probe-unit.mjs && node test/harness-supervisor-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs && node test/system-config-unit.mjs && node test/dsh-port-unit.mjs && node test/qr-source-unit.mjs && node test/proxy-state-unit.mjs && node test/privacy-unit.mjs",
+    "test:session": "node test/workspace-unit.mjs && node test/session-ownership-unit.mjs && node test/session-conflict-unit.mjs && node test/harness-owner-unit.mjs && node test/ownership-console-unit.mjs && node test/model-credentials-unit.mjs && node test/probe-unit.mjs && node test/harness-supervisor-unit.mjs && node test/harness-supervisor-child-unit.mjs && node test/retention-unit.mjs && node test/persona-unit.mjs && node test/group-role-unit.mjs && node test/acl-unit.mjs && node test/paths-unit.mjs && node test/subject-isolation-unit.mjs && node test/acl-gates-unit.mjs && node test/tool-surface-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs && node test/system-config-unit.mjs && node test/dsh-port-unit.mjs && node test/qr-source-unit.mjs && node test/proxy-state-unit.mjs && node test/privacy-unit.mjs",
     "test:persona": "node test/persona-unit.mjs",
     "test:group-role": "node test/group-role-unit.mjs",
     "test:acl": "node test/acl-unit.mjs && node test/acl-store-unit.mjs && node test/acl-console-unit.mjs && node test/acl-gates-unit.mjs && node test/acl-enforcement-unit.mjs && node test/corpus-unit.mjs",
@@ -40,7 +40,7 @@
     "privacy": "node test/privacy-unit.mjs",
     "verify": "node test/control-unit.mjs && node test/privacy-unit.mjs",
     "prepublishOnly": "npm run verify",
-    "test:ownership": "node test/session-conflict-unit.mjs && node test/harness-owner-unit.mjs && node test/harness-supervisor-unit.mjs && node test/probe-unit.mjs && node test/ownership-console-unit.mjs && node test/model-credentials-unit.mjs"
+    "test:ownership": "node test/session-conflict-unit.mjs && node test/harness-owner-unit.mjs && node test/harness-supervisor-unit.mjs && node test/harness-supervisor-child-unit.mjs && node test/probe-unit.mjs && node test/ownership-console-unit.mjs && node test/model-credentials-unit.mjs"
   },
   "exports": {
     ".": "./lib/index.js",
