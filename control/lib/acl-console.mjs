@@ -347,6 +347,15 @@ export async function startAclConsole({ file, token = createAclToken(), ui = '',
       res.end(systemHtml)
       return
     }
+    if (url.pathname === '/setup' || url.pathname === '/setup.html') {
+      // 首次配置向导：密码 → 白名单 → 系统配置（可选）→ 扫码。安装脚本收尾会打印这个地址。
+      const setupHtml = existsSync(new URL('../setup-ui.html', import.meta.url))
+        ? readFileSync(new URL('../setup-ui.html', import.meta.url), 'utf8')
+        : '<!doctype html><meta charset="utf-8"><h1>首次配置向导</h1><p>缺少 control/setup-ui.html —— 去「机器人身份 / 系统配置」页手动配置即可。</p>'
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(setupHtml)
+      return
+    }
     if (url.pathname === '/status' || url.pathname === '/status.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
       res.end(statusHtml)

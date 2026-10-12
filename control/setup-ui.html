@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>首次配置向导</title>
+<link rel="stylesheet" href="/console.css">
+<style>
+  .st-card { margin-bottom:16px; }
+  .st-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .st-num { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+            font-weight:600; font-size:13px; background:rgba(76,141,255,.14); color:#8fb6ff; border:1px solid rgba(76,141,255,.35); }
+  .st-num.done { background:rgba(49,196,141,.14); color:#4ddba6; border-color:rgba(49,196,141,.4); }
+  .st-badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; }
+  .st-badge.on { background:rgba(49,196,141,.14); color:#4ddba6; border:1px solid rgba(49,196,141,.35); }
+  .st-badge.off { background:rgba(120,133,154,.14); color:#9aa7b8; border:1px solid rgba(120,133,154,.35); }
+  .st-badge.skip { background:rgba(210,153,34,.12); color:#e3b341; border:1px solid rgba(210,153,34,.3); }
+  .st-in { background:var(--bg); color:var(--fg); border:1px solid var(--line2); border-radius:8px; padding:7px 9px;
+           font-size:13px; font-family:var(--mono); width:100%; margin-top:6px; }
+  .st-in:focus { outline:2px solid rgba(88,166,255,.55); outline-offset:1px; border-color:transparent; }
+  .st-row { display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .st-hint { font-size:12px; color:#9aa7b8; }
+  .st-kv { font-family:var(--mono); font-size:12.5px; }
+</style>
+</head>
+<body class="qqc">
+<div class="qqc-top"><div class="qqc-top-in">
+  <span class="qqc-title">首次配置向导</span>
+  <span class="qqc-sub" id="whoami"></span>
+  <nav>
+    <a href="/status">状态台</a>
+    <a href="/plugins">插件</a>
+    <a href="/system">系统配置</a>
+    <a href="/">权限与语料</a>
+    <a href="#" onclick="doLogout();return false">退出</a>
+    <button class="qqc-btn ghost sm" onclick="load()">刷新</button>
+  </nav>
+</div></div>
+
+<div class="qqc-wrap">
+  <div id="banner"></div>
+
+  <div class="qqc-card st-card">
+    <div class="st-head"><div class="st-num" id="n1">1</div><h2 class="qqc-h" style="margin:0">设控制台管理员密码</h2><span class="st-badge off" id="b1">待完成</span></div>
+    <p class="qqc-sub">控制台是唯一的管理入口（白名单、插件、扫码、日志）。它只绑 127.0.0.1，密码用 scrypt 加盐存在你自己的数据卷里。</p>
+    <div id="s1"></div>
+  </div>
+
+  <div class="qqc-card st-card">
+    <div class="st-head"><div class="st-num" id="n2">2</div><h2 class="qqc-h" style="margin:0">填白名单：谁能让机器人说话</h2><span class="st-badge off" id="b2">待完成</span></div>
+    <p class="qqc-sub">留空 = <b>谁都不回</b>（出厂防呆）。先填你自己的 QQ；群不服务就留空。群里的默认角色是只读（guest），owner 才能读写文件、跑命令。</p>
+    <div id="s2"></div>
+  </div>
+
+  <div class="qqc-card st-card">
+    <div class="st-head"><div class="st-num" id="n3">3</div><h2 class="qqc-h" style="margin:0">系统配置（可选）</h2><span class="st-badge skip" id="b3">可跳过</span></div>
+    <p class="qqc-sub">GitHub token、git 用户名邮箱、工作区。要用 <span class="st-kv">gh</span> / <span class="st-kv">git push</span> 才需要，随时能在「系统配置」页补。</p>
+    <div id="s3" class="st-hint"></div>
+    <div class="st-row"><a class="qqc-btn sm" href="/system">去「系统配置」页</a></div>
+  </div>
+
+  <div class="qqc-card st-card">
+    <div class="st-head"><div class="st-num" id="n4">4</div><h2 class="qqc-h" style="margin:0">扫码登录 QQ</h2><span class="st-badge off" id="b4">待确认</span></div>
+    <p class="qqc-sub">自带协议端时，在这里看二维码扫码登录（首次要手机确认）。登录态存在数据卷里，重启不用重扫。</p>
+    <div id="s4" class="st-hint"></div>
+    <div class="st-row"><a class="qqc-btn sm" href="/status">去「状态台」扫码</a></div>
+  </div>
+
+  <div class="qqc-card"><div id="done" class="st-hint"></div></div>
+</div>
+
+<script>
+const el = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const state = { session:null, identity:null, settings:null, status:null };
+
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? undefined : { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
+  if (res.status === 401) return { ok:false, unauthorized:true };
+  return res.json().catch(() => ({}));
+}
+async function doLogout() { await fetch('/api/logout', { method:'POST' }); location.href = '/login'; }
+function msg(text, kind) {
+  const color = kind === 'err' ? '#f0616d' : (kind === 'ok' ? '#4ddba6' : '#9aa7b8');
+  return `<div class="st-hint" style="color:${color};margin-top:8px">${esc(text)}</div>`;
+}
+function setStep(n, done) {
+  el('n' + n).className = 'st-num' + (done ? ' done' : '');
+  el('b' + n).className = 'st-badge ' + (done ? 'on' : 'off');
+  el('b' + n).textContent = done ? '已完成' : '待完成';
+}
+
+async function load() {
+  state.session = await api('/api/session');
+  const s = state.session || {};
+  el('whoami').textContent = s.user ? ('已登录：' + s.user) : '未登录';
+  const needSetup = s.setupRequired === true;
+  const logged = Boolean(s.user);
+
+  // ① 密码
+  if (needSetup) {
+    el('b1').textContent = '待完成';
+    el('s1').innerHTML = `
+      <div class="st-row" style="margin-top:4px">
+        <div style="flex:1;min-width:200px"><label class="st-hint">管理员用户名</label><input id="u" class="st-in" value="admin"></div>
+        <div style="flex:1;min-width:200px"><label class="st-hint">密码（≥ 8 位）</label><input id="p" class="st-in" type="password" autocomplete="new-password"></div>
+        <div style="flex:1;min-width:200px"><label class="st-hint">再输一次</label><input id="p2" class="st-in" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="st-row"><button class="qqc-btn" id="b1go">创建并登录</button><span class="st-hint">首次使用会直接创建管理员账号。</span></div>
+      <div id="m1"></div>`;
+    el('b1go').onclick = async () => {
+      const p = el('p').value, p2 = el('p2').value;
+      if (p.length < 8) return el('m1').innerHTML = msg('密码至少 8 位', 'err');
+      if (p !== p2) return el('m1').innerHTML = msg('两次输入不一致', 'err');
+      el('m1').innerHTML = msg('创建中…');
+      const r = await api('/api/setup', { user: el('u').value.trim() || 'admin', password: p });
+      if (!r.ok) return el('m1').innerHTML = msg(r.error || '创建失败', 'err');
+      location.href = '/setup';
+    };
+  } else {
+    el('s1').innerHTML = `<div class="st-row"><span class="st-hint">已创建管理员账号${s.user ? '，你当前已登录' : '，去 <a href="/login?next=/setup">登录</a> 后继续下面几步'}。</span></div>`;
+  }
+  setStep(1, !needSetup);
+
+  if (!logged) {
+    el('s2').innerHTML = msg('先完成第 1 步（或登录）再填白名单。');
+    el('s3').innerHTML = msg('登录后可以看到当前配置状态。');
+    el('s4').innerHTML = msg('登录后可以看到协议端状态。');
+    setStep(2, false); setStep(3, false); setStep(4, false);
+    el('done').textContent = '还差 1 步：先设密码（或登录）。';
+    return;
+  }
+
+  const [identity, settings, status] = await Promise.all([api('/api/identity'), api('/api/system/settings'), api('/api/status')]);
+  state.identity = identity; state.settings = settings; state.status = status;
+
+  // ② 白名单
+  const cur = Array.isArray(identity?.allowUsers) ? identity.allowUsers : [];
+  const curG = Array.isArray(identity?.allowGroups) ? identity.allowGroups : [];
+  el('b2').textContent = cur.length > 0 ? '已完成' : '待完成';
+  el('s2').innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <div style="flex:1;min-width:240px"><label class="st-hint">私聊允许的 QQ 号（一行一个）</label><textarea id="wu" class="st-in" rows="4">${esc(cur.join('\n'))}</textarea></div>
+      <div style="flex:1;min-width:240px"><label class="st-hint">允许的群号（一行一个，不服务就留空）</label><textarea id="wg" class="st-in" rows="4">${esc(curG.join('\n'))}</textarea></div>
+    </div>
+    <div class="st-row">
+      <div style="min-width:220px"><label class="st-hint">登录密码（改权限需要再验一次）</label><input id="wpw" class="st-in" type="password" autocomplete="current-password"></div>
+      <button class="qqc-btn" id="b2go">保存白名单</button>
+      <span class="st-hint">保存后要重启一次宿主才生效：${esc('docker compose restart harness')}</span>
+    </div>
+    <div id="m2"></div>`;
+  el('b2go').onclick = async () => {
+    const pw = el('wpw').value;
+    if (!pw) return el('m2').innerHTML = msg('请填写登录密码（用来确认是本人改权限）', 'err');
+    el('m2').innerHTML = msg('校验中…');
+    const re = await api('/api/reauth', { password: pw });
+    if (!re.ok) return el('m2').innerHTML = msg(re.error || '密码不对', 'err');
+    const users = el('wu').value.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+    if (users.length === 0 && !confirm('私聊白名单是空的：这样谁都不能和机器人说话。确定保存吗？')) return;
+    const r = await api('/api/identity/save', {
+      allowUsers: users,
+      allowGroups: el('wg').value.split(/\n+/).map((x) => x.trim()).filter(Boolean),
+      identityEnabled: identity?.identity?.enabled === false ? false : true,
+    });
+    if (!r.ok) return el('m2').innerHTML = msg((r.error || '保存失败') + ((r.warnings || []).length ? ' ｜ ' + r.warnings.join('；') : ''), 'err');
+    el('m2').innerHTML = msg('已保存' + ((r.warnings || []).length ? ' ｜ ' + r.warnings.join('；') : '') + ' ｜ 记得重启宿主：docker compose restart harness', 'ok');
+    setTimeout(load, 600);
+  };
+  setStep(2, cur.length > 0 || curG.length > 0);
+
+  // ③ 系统配置（可选）
+  const cfg = settings?.config || {};
+  const gh = cfg.github || {}, git = cfg.git || {};
+  const bits = [];
+  bits.push(gh.tokenSet ? `GitHub token：已配（${esc(gh.tokenHint || '')}）` : 'GitHub token：没配（可跳过）');
+  bits.push(git.userName || git.userEmail ? `git 身份：${esc(git.userName || '-')} <${esc(git.userEmail || '-')}>` : 'git 身份：没配（可跳过）');
+  bits.push(`工作区：${esc(cfg.workspace?.path || '默认')}`);
+  el('s3').innerHTML = bits.map((b) => `<div>· ${b}</div>`).join('');
+  setStep(3, Boolean(gh.tokenSet || git.userName));
+
+  // ④ 扫码
+  const napcatUp = status?.ports?.napcatUsable === true;
+  const containers = (status?.docker?.containers || []).filter((c) => /napcat/.test(c.name));
+  el('s4').innerHTML = [
+    `· 协议端容器：${containers.length ? containers.map((c) => esc(c.name + ' ' + c.status)).join(' / ') : '没看到 napcat 容器（你选了复用/不接？）'}`,
+    `· NapCat WebUI：${napcatUp ? '可以打开（去状态台扫码）' : '暂时打不开'}`,
+  ].join('<br>');
+  setStep(4, napcatUp);
+
+  const nLeft = [!needSetup ? 1 : 0, (cur.length || curG.length) ? 1 : 0, (gh.tokenSet || git.userName) ? 1 : 0, napcatUp ? 1 : 0].filter((x) => !x).length;
+  const optionalLeft = [1, 1, 0, 1].filter((_, i) => ![!needSetup, (cur.length || curG.length), (gh.tokenSet || git.userName), napcatUp][i]).length;
+  el('done').innerHTML = nLeft === 0
+    ? '<b style="color:#4ddba6">全部完成 ✓</b> 现在去 QQ 里找机器人说话吧（群里要 @ 它）。之后改配置：左侧任意一页。'
+    : `还差 <b>${nLeft}</b> 步（其中 ${optionalLeft} 步是可选的，可以一直跳过）。`;
+}
+
+load();
+</script>
+</body>
+</html>
