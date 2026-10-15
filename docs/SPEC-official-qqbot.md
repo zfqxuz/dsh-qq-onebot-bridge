@@ -7,6 +7,28 @@
 
 ---
 
+## 0. 关键结论：官方插件可用 —— 但建议「拿它当底座」，而不是「换成它」
+
+腾讯官方（GitHub `tencent-connect` 组织）确实发布了 DSH 插件，且是活跃仓库（MIT，2026-08 建仓，10-13 仍在推）：
+
+| 包 | 版本 | 许可 | 作用 |
+| --- | --- | --- | --- |
+| `@tencent-connect/dsh-qqbot` | 0.5.2 | MIT | 官方 DSH 通道插件：QQ → DSH agent（含扫码绑定、端内绑定页） |
+| `@tencent-connect/qqbot-nodejs` | 1.0.5 | MIT | **协议层 SDK**：token / 网关（WS + Webhook + Ed25519 验签）/ 消息 / 媒体分片上传 / C2C 流式 / 洋葱中间件 |
+| `@tencent-connect/qqbot-connector` | 1.2.0 | **UNLICENSED** | 扫码绑定，换取 AppID/AppSecret |
+
+**官方插件开箱能给的**：扫码绑定、私聊/群聊会话隔离（`qqbot:{appId}:{scope}:{peerId}`）、Markdown 输出（代码块/表格感知切分）、图片视觉理解、发本地文件（路径白名单）、`ask_user_question` 内联按钮、审批确认按钮、`/new /compact /model /preset /stop /bot-*`、闲置回收、C2C 流式、access 白名单（`open`/`allowlist`/`disabled`）。
+
+**它没有的（= 我们桥的价值）**：RBAC 权限库与主体隔离、群管/运营命令、玩法（骰子/运势/签到/积分/投票）、归档与检索、定时提醒与播报、入站 webhook、TTS/STT、限流与审计闸门、事件注入与离线回放、控制台与体检。
+
+**结论（三条）**：
+
+1. **想今天止血**：单独起一个 profile 装官方插件、扫码跑通（见 § 14 第 0 步）。它同时验证了主体认证、事件权限、群主开关这些平台侧配置是否正确 —— 这是最便宜的「平台可用性」验证。
+2. **想长期保留功能面**：不要把官方插件当替代品，而是把 `@tencent-connect/qqbot-nodejs`（MIT、纯协议层、运行时只依赖 `ws`）作为我们 transport 层的底座。§ 3 里原计划手写的 auth / gateway / 超长重连 / 富媒体上传 / 流式 / 去重 / 限流，全部由它提供，我们只写**事件归一化 + 出站映射 + 能力位**。
+3. **同一个 AppID 不要双跑**：两边都连网关会抢事件、双回复。要并存就用两个机器人（两个 AppID，例如官方插件当数字人助手、我们的桥当 TRPG 主持人）。
+
+---
+
 ## 1. 为什么做这件事
 
 NapCat 这类第三方 OneBot 实现是**非官方协议**：登录态来自"模拟客户端"，风控一收紧就批量封号。现在账号已经封到不可用，继续在 NapCat 上堆功能等于把能力建在一个随时会塌的地基上。
@@ -273,8 +295,8 @@ lib/transport/
 | 阶段 | 内容 | 验收 |
 | --- | --- | --- |
 | **P0** | transport 抽象 + `onebot-transport` 适配；`capabilities` 加 `transport` gate；**行为零变化** | 现有测试全绿；`transport: onebot` 下与今日完全一致 |
-| **P1** | `qqbot` 只读+文本：auth / gateway / 事件归一化 / 群 @ 与单聊文本收发 / 被动回复（msg_id + msg_seq）/ 长文分段 | 真机：群里 @ 能答、私聊能答、长回复不丢段 |
-| **P2** | 富媒体：图片/语音/文件收发（分片上传）、引用回复、输入中状态、Markdown | 真机：收图能看图、TTS 语音能播、发文件能下载 |
+| **P1** | 接入官方 SDK 作底座（`new QQBot({ appId, appSecret })`，auth/网关/重连/Resume 交给它）+ 事件归一化 + 群 @ 与单聊文本收发 + 被动回复（`msg_id`/`msg_seq`）+ 长文分段 | 真机：群里 @ 能答、私聊能答、长回复不丢段 |
+| **P2** | 富媒体：直接用 SDK 的 `sendImage`/`sendVoice`/`sendFile`（≥5MB 自动分片）+ 引用回复 + 输入中状态 + Markdown；发语音补装可选依赖 `silk-wasm`（mp3 再补 `mpg123-decoder`） | 真机：收图能看图、TTS 语音能播、发文件能下载 |
 | **P3** | 身份与运维：主体表 + 控制台待认领、配额守门、撤回、禁言(`restrict_chat_setting`)、能力位裁剪（❌ 命令自动隐藏） | 控制台能授权新群/新人；超配额有降级与审计 |
 | **P4** | 迁移：ECS 切通道、NapCat 下线、部署包/安装器/文档更新、README 与 CHANGELOG | 生产跑在官方通道上，NapCat 相关依赖可移除 |
 
@@ -291,7 +313,10 @@ P0 与 P1 之间需要一个"**真机联调**"节点（见第 14 节清单）。
 | 个人主体进群上限 500、未认证只能用自己当群主的群 | 文档写清；必要时走个人认证 |
 | 主动消息被用户/群主关闭 | 事件同步开关状态 + 本地降级为被动回复/摘要 |
 | 官方接口还在演进（内邀中的接口随时开放/改名） | 能力位 + 接口层薄封装，改一个文件即可 |
-| 群内 @ 语义与 OneBot 不同（content 已去前缀、mentions 不含机器人自身） | 归一化层补齐"是否 @ 了机器人"的判定，别让业务层猜 |
+| 群内 @ 语义与 OneBot 不同（content 已去前缀、mentions 不含机器人自身） | 归一化层补齐「是否 @ 了机器人」的判定，别让业务层猜 |
+| 官方 SDK 默认 intents 不含 `1<<24`（群成员事件）/ `1<<27`（审核） | 需要时用 `new QQBot({ intents })` 自行叠加，并按 § 4.3 做无权限降级 |
+| 发语音依赖可选 peer 依赖 `silk-wasm` | 部署包/安装器列为语音功能的可选安装项，缺失时降级为文本 |
+| `qqbot-connector` 是 UNLICENSED | 不把它做成公开包的硬依赖；扫码绑定只做本地可选路径，手填 AppID/AppSecret 永远保底 |
 
 ---
 
@@ -299,7 +324,9 @@ P0 与 P1 之间需要一个"**真机联调**"节点（见第 14 节清单）。
 
 - 官方文档：QQ 机器人 v2（启动接入 / 获取访问凭证 / 事件订阅 Intents / 群聊消息 / 富媒体 / 群聊管理）
 - 官方 FAQ：服务范围、群主三开关、沙箱已取消、union_openid 申请
-- 参考实现（可对照协议细节）：`@tencent-connect/openclaw-qqbot`（官方 OpenClaw 插件）
+- 官方 DSH 插件：`tencent-connect/dsh-qqbot`（对照其 `src/transport/`：reply-limiter / msgid-cache / chunker / typing-indicator，MIT，实现细节比文档可靠）
+- 官方协议 SDK：`tencent-connect/qqbot-nodejs`（`src/protocol/gateway/` 有 opcode / intent / close code 常量；`src/middleware/` 有现成的去重、限流、@ 判定、引用解析、历史缓冲、信封拼装）
+- 另一条通道的参考实现：`@tencent-connect/openclaw-qqbot`（官方 OpenClaw 插件）
 
 ---
 
@@ -307,7 +334,11 @@ P0 与 P1 之间需要一个"**真机联调**"节点（见第 14 节清单）。
 
 **平台侧（你去做）**
 
-- [ ] 在 QQ 开放平台建好机器人 → 提供 **AppID + AppSecret**
+- [ ] **第 0 步（可选但强烈建议，约 10 分钟）**：单独建 profile 装官方插件做平台侧验证
+      `dsh plugin --profile qqbot add @tencent-connect/dsh-qqbot` 然后 `dsh --profile qqbot`
+      扫码绑定 → 把机器人拉进测试群 → 群主开开关 → 群里 @ 一下能回，说明主体认证/事件权限/群开关都通了。
+      验证完可以留着当第二个机器人，或卸载；**注意别和我们的桥用同一个 AppID 同跑**。
+- [ ] 在 QQ 开放平台建好机器人 → 提供 **AppID + AppSecret**（管理端复制；或扫码绑定后从 profile 配置里取）
 - [ ] 管理端「事件订阅」择 **WebSocket**（不需要公网）
 - [ ] 确认 `GROUP_AND_C2C_EVENT (1<<25)` 是否已开通；要不要一起开 `GROUP_MEMBER_EVENT (1<<24)`
 - [ ] IP 白名单：要么留空（默认允许所有），要么把测试机与 ECS 出口 IP 加进去
